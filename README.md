@@ -64,7 +64,7 @@ sabnzbd_pause = true       # pause the SABnzbd queue while a direct search runs
 
 The API exposes `POST /api/jobs` (`{"nzblnk": "..."}`), `GET /api/jobs`, `GET /api/jobs/{id}`, `GET /api/jobs/{id}/log`, `DELETE /api/jobs/{id}` and `GET /api/healthz`. Jobs run one at a time and keep their logs in memory for the last 100 jobs.
 
-When SABnzbd reports a login page (`api?mode=auth` -> `login`), the service shows a login form and verifies the same credentials against SABnzbd before issuing a short-lived session token. When SABnzbd only uses an API key, the service relies on the same network boundary and the optional static `token` instead.
+When the SABnzbd web interface requires a login (its web root redirects to `*/login/`), the service shows a login form and verifies the same username/password against SABnzbd before issuing a short-lived session token. When the SABnzbd interface is open, the service relies on the same network boundary and the optional static `token` instead.
 
 ### SABnzbd configuration import
 
