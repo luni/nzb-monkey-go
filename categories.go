@@ -34,11 +34,22 @@ func checkCategories() string {
 		return ""
 	}
 
-	if conf.General.Categorize == "manual" && targets[conf.General.Target].getCategories != nil {
+	// find the first configured target that supports category retrieval
+	var catTarget Target
+	catTargetFound := false
+	for _, targetName := range conf.General.Targets {
+		if target, ok := targets[targetName]; ok && target.getCategories != nil {
+			catTarget = target
+			catTargetFound = true
+			break
+		}
+	}
+
+	if conf.General.Categorize == "manual" && catTargetFound {
 		fmt.Println()
 		Log.Info("Manual category selection")
-		Log.Info("Getting categories from %s ...", targets[conf.General.Target].name)
-		if categories, err := targets[conf.General.Target].getCategories(); err == nil {
+		Log.Info("Getting categories from %s ...", catTarget.name)
+		if categories, err := catTarget.getCategories(); err == nil {
 			if len(categories) > 0 {
 				fmt.Printf("   Please select category:\n")
 				color.Set(color.FgCyan)
@@ -68,7 +79,7 @@ func checkCategories() string {
 					}
 				}
 			} else {
-				Log.Warn("%s returned no categories", targets[conf.General.Target].name)
+				Log.Warn("%s returned no categories", catTarget.name)
 			}
 		} else {
 			Log.Error("Unable to get categories: %s", err.Error())
@@ -84,7 +95,7 @@ func inputReader() string {
 		if errors.Is(err, io.EOF) { // prefered way by GoLang doc
 			os.Exit(0)
 		}
-		Log.Warn("An error occurred while reading input. Please try again", err)
+		Log.Warn("An error occurred while reading input. Please try again: %s", err)
 		return ""
 	}
 	return strings.TrimSpace(input)
