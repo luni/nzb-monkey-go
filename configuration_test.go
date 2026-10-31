@@ -85,6 +85,51 @@ func TestLoadConfig(t *testing.T) {
 	}
 }
 
+// a NEWZNAB entry must register a dynamic engine that resolves through
+// SEARCHENGINES weights like a builtin
+func TestLoadConfigNewznab(t *testing.T) {
+	confPath = writeConfig(t, `
+[GENERAL]
+target = "EXECUTE"
+
+[SEARCHENGINES]
+binsearch = 2
+myindexer = 1
+
+[NEWZNAB]
+myindexer = "indexer.example.org,KEY-ABC"
+broken = "justahost"
+unused = "other.example.org,KEY2"
+`)
+	loadConfig()
+
+	engine, ok := searchEngines["myindexer"]
+	if !ok {
+		t.Fatal("newznab engine 'myindexer' was not registered")
+	}
+	wantURL := "https://indexer.example.org/api?t=search&q=%s&apikey=KEY-ABC"
+	if engine.searchURL != wantURL {
+		t.Errorf("searchURL = %q, want %q", engine.searchURL, wantURL)
+	}
+	if engine.apikey != "KEY-ABC" {
+		t.Errorf("apikey = %q, want KEY-ABC", engine.apikey)
+	}
+	if engine.search == nil {
+		t.Error("search func not set")
+	}
+	// weight 1 puts it before binsearch (weight 2)
+	if len(conf.Searchengines) != 2 || conf.Searchengines[0] != "myindexer" || conf.Searchengines[1] != "binsearch" {
+		t.Errorf("Searchengines = %v, want [myindexer binsearch]", conf.Searchengines)
+	}
+	// the malformed and unused entries must not register
+	if _, ok := searchEngines["broken"]; ok {
+		t.Error("'broken' newznab entry must not be registered")
+	}
+	if _, ok := newznabEngines["unused"]; !ok {
+		t.Error("valid 'unused' entry should be registered but not enabled")
+	}
+}
+
 // empty entries in the comma-separated target list must be skipped
 func TestLoadConfigEmptyTargetEntries(t *testing.T) {
 	confPath = writeConfig(t, `
