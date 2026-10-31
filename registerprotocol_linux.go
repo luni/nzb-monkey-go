@@ -24,7 +24,7 @@ func registerProtocol() {
 
 	desktopFilePath = filepath.Join(homeDir, ".local/share/applications")
 	desktopFile = filepath.Join(desktopFilePath, "nzblnk.desktop")
-	desktopCommand = fmt.Sprintf("%s '%%u'", appExec)
+	desktopCommand = fmt.Sprintf("\"%s\" '%%u'", appExec)
 	desktopFileContent = fmt.Sprintf(`[Desktop Entry]
 Type=Application
 Name=NZBlnk
@@ -37,7 +37,7 @@ Terminal=true
 
 	fmt.Println()
 	Log.Info("Writing desktop file '%s' ... ", desktopFile)
-	err = os.MkdirAll(desktopFilePath, os.ModePerm)
+	err = os.MkdirAll(desktopFilePath, 0755)
 	if err != nil {
 		Log.Error("Failed to create directory '%s': %s", desktopFilePath, err.Error())
 		exitWithError()
