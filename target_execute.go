@@ -50,7 +50,7 @@ func execute_push(nzb string, category string) error {
 			if str == "y" || str == "Y" {
 				fmt.Println()
 				Log.Info("Creating path '%s' ...", path)
-				if err := os.MkdirAll(path, os.ModePerm); err != nil {
+				if err := os.MkdirAll(path, 0755); err != nil {
 					return fmt.Errorf("unable to save NZB file: error creating path '%s': %s", path, err.Error())
 				}
 				break
@@ -69,6 +69,9 @@ func execute_push(nzb string, category string) error {
 	// sanitize filename
 	sanitize, _ := svach.WithOpts("", 255)
 	nzbFileName := sanitize.Name(args.Title)
+	if nzbFileName == "" {
+		nzbFileName = "nzb"
+	}
 
 	// make filenames
 	zipFileName := nzbFileName
@@ -133,7 +136,7 @@ func writeFile(path string, fileName string, file string, compress bool, zipFile
 		}
 	} else {
 		path = filepath.Join(path, fileName+".nzb")
-		if err := os.WriteFile(path, []byte(file), os.ModePerm); err != nil {
+		if err := os.WriteFile(path, []byte(file), 0644); err != nil {
 			return "", err
 		}
 	}
@@ -144,6 +147,8 @@ func execute_cleanup(path string) {
 	Log.Info("Cleaning up nzb folder '%s'", path)
 	if files, err := os.ReadDir(path); err == nil {
 		delete_files(files, path, 0)
+	} else {
+		Log.Warn("Error reading nzb folder during cleanup: %v", err)
 	}
 }
 
