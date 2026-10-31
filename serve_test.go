@@ -143,57 +143,73 @@ func TestImportSabnzbdIniMissingFile(t *testing.T) {
 	}
 }
 
-func TestSabnzbdAuthMethods(t *testing.T) {
-	for _, tc := range []struct {
-		response string
-		want     map[string]bool
-	}{
-		{`{"auth":"apikey"}`, map[string]bool{"apikey": true}},
-		{`{"auth":"login"}`, map[string]bool{"login": true}},
-		{`{"auth":{"login":true,"apikey":true}}`, map[string]bool{"login": true, "apikey": true}},
-	} {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
-			fmt.Fprint(w, tc.response)
-		}))
-		methods, err := sabnzbdAuthMethods(srv.URL)
-		srv.Close()
-		if err != nil {
-			t.Fatalf("sabnzbdAuthMethods failed: %v", err)
+func TestSabnzbdLoginURL(t *testing.T) {
+	// SABnzbd with UI login redirects the web root to */login/
+	loginSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/" {
+			http.Redirect(w, r, "/sabnzbd/login/", http.StatusSeeOther)
+			return
 		}
-		if len(methods) != len(tc.want) {
-			t.Fatalf("%s: expected %v, got %v", tc.response, tc.want, methods)
-		}
-		for k := range tc.want {
-			if !methods[k] {
-				t.Fatalf("%s: missing method %q in %v", tc.response, k, methods)
-			}
-		}
+	}))
+	defer loginSrv.Close()
+
+	loginURL, err := sabnzbdLoginURL(loginSrv.URL)
+	if err != nil {
+		t.Fatalf("sabnzbdLoginURL failed: %v", err)
+	}
+	if loginURL != loginSrv.URL+"/sabnzbd/login/" {
+		t.Fatalf("unexpected login URL: %q", loginURL)
+	}
+
+	// an open SABnzbd (no login) serves the interface directly
+	openSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer openSrv.Close()
+
+	loginURL, err = sabnzbdLoginURL(openSrv.URL)
+	if err != nil {
+		t.Fatalf("sabnzbdLoginURL failed: %v", err)
+	}
+	if loginURL != "" {
+		t.Fatalf("expected no login URL, got %q", loginURL)
 	}
 }
 
 func TestSabnzbdLogin(t *testing.T) {
+	loginURL := ""
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/login/" || r.Method != http.MethodPost {
-			t.Errorf("unexpected login request %s %s", r.Method, r.URL.Path)
-		}
-		if err := r.ParseForm(); err != nil {
-			t.Errorf("failed to parse login form: %v", err)
-		}
-		if r.PostForm.Get("username") == "sab" && r.PostForm.Get("password") == "secret" {
-			http.SetCookie(w, &http.Cookie{Name: "login_cookie", Value: "sessionid"})
-			w.WriteHeader(http.StatusFound)
+		if r.Method == http.MethodGet && r.URL.Path == "/" {
+			http.Redirect(w, r, "/sabnzbd/login/", http.StatusSeeOther)
 			return
 		}
-		w.WriteHeader(http.StatusUnauthorized)
+		if r.Method == http.MethodPost && r.URL.Path == "/sabnzbd/login/" {
+			if err := r.ParseForm(); err != nil {
+				t.Errorf("failed to parse login form: %v", err)
+			}
+			if r.PostForm.Get("username") == "sab" && r.PostForm.Get("password") == "secret" {
+				http.Redirect(w, r, "/sabnzbd/", http.StatusSeeOther)
+				return
+			}
+			// failed login re-renders the login page
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
 	}))
 	defer srv.Close()
 
-	ok, err := sabnzbdLogin(srv.URL, "sab", "secret")
+	var err error
+	loginURL, err = sabnzbdLoginURL(srv.URL)
+	if err != nil || loginURL == "" {
+		t.Fatalf("login probe failed: %v %q", err, loginURL)
+	}
+
+	ok, err := sabnzbdLogin(loginURL, "sab", "secret")
 	if err != nil || !ok {
 		t.Fatalf("expected successful login, got ok=%v err=%v", ok, err)
 	}
-	ok, err = sabnzbdLogin(srv.URL, "sab", "wrong")
+	ok, err = sabnzbdLogin(loginURL, "sab", "wrong")
 	if err != nil || ok {
 		t.Fatalf("expected failed login, got ok=%v err=%v", ok, err)
 	}

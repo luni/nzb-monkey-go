@@ -48,31 +48,36 @@ func sabnzbdSimpleCall(baseURL string, apikey string, mode string) error {
 	return fmt.Errorf("SABnzbd mode=%s did not return status true", mode)
 }
 
-// sabnzbdAuthMethods returns the auth methods SABnzbd reports (e.g. apikey,
-// login, cert).
-func sabnzbdAuthMethods(baseURL string) (map[string]bool, error) {
-	res, err := sabnzbdApiGet(baseURL, url.Values{"mode": {"auth"}, "output": {"json"}})
+// sabnzbdLoginURL probes whether the SABnzbd web interface requires a login
+// and returns the absolute login URL, or "" when the interface is open.
+// SABnzbd redirects the web root to "<path>/login/" when UI login is enabled.
+func sabnzbdLoginURL(baseURL string) (string, error) {
+	client := &http.Client{
+		Timeout: 15 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	base, err := url.Parse(strings.TrimRight(baseURL, "/") + "/")
 	if err != nil {
-		return nil, err
+		return "", err
 	}
-	methods := make(map[string]bool)
-	switch auth := res["auth"].(type) {
-	case string:
-		methods[auth] = true
-	case []any:
-		for _, m := range auth {
-			if s, ok := m.(string); ok {
-				methods[s] = true
-			}
+	resp, err := client.Get(base.String())
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if loc := resp.Header.Get("Location"); loc != "" &&
+		(resp.StatusCode >= 300 && resp.StatusCode < 400) {
+		redirect, err := base.Parse(loc)
+		if err != nil {
+			return "", err
 		}
-	case map[string]any:
-		for k, v := range auth {
-			if b, ok := v.(bool); ok && b {
-				methods[k] = true
-			}
+		if strings.HasSuffix(redirect.Path, "/login/") {
+			return redirect.String(), nil
 		}
 	}
-	return methods, nil
+	return "", nil
 }
 
 // sabnzbdQueuePaused reports whether the SABnzbd queue is paused.
@@ -90,9 +95,10 @@ func sabnzbdQueuePaused(baseURL string, apikey string) (bool, error) {
 	return false, fmt.Errorf("could not determine SABnzbd queue state")
 }
 
-// sabnzbdLogin verifies web UI credentials against SABnzbd's /login/ page.
-// It only applies when SABnzbd itself has web interface login enabled.
-func sabnzbdLogin(baseURL string, username string, password string) (bool, error) {
+// sabnzbdLogin verifies web UI credentials against SABnzbd's login page.
+// Successful login is answered with a redirect to the interface, a failed
+// attempt re-renders the login page with status 200.
+func sabnzbdLogin(loginURL string, username string, password string) (bool, error) {
 	form := url.Values{"username": {username}, "password": {password}}
 	client := &http.Client{
 		Timeout: 15 * time.Second,
@@ -100,12 +106,14 @@ func sabnzbdLogin(baseURL string, username string, password string) (bool, error
 			return http.ErrUseLastResponse // inspect the redirect response itself
 		},
 	}
-	resp, err := client.PostForm(strings.TrimRight(baseURL, "/")+"/login/", form)
+	resp, err := client.PostForm(loginURL, form)
 	if err != nil {
 		return false, err
 	}
 	defer resp.Body.Close()
-	// successful login redirects to the interface and sets the login cookie
+	if resp.StatusCode >= 300 && resp.StatusCode < 400 {
+		return true, nil
+	}
 	for _, c := range resp.Cookies() {
 		if c.Name == "login_cookie" && c.Value != "" {
 			return true, nil

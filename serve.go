@@ -130,9 +130,10 @@ type serveState struct {
 	jobs         *jobStore
 	sessions     *sessionStore
 	workQueue    chan *serveJob
-	sabLogin     bool // SABnzbd has web UI login enabled
-	sabAvailable bool // SABnzbd API reachable at startup
-	authRequired bool // any bearer token required
+	sabLogin     bool   // SABnzbd has web UI login enabled
+	sabLoginURL  string // SABnzbd web UI login endpoint
+	sabAvailable bool   // SABnzbd API reachable at startup
+	authRequired bool   // any bearer token required
 }
 
 // serve starts the HTTP service. It blocks forever; on error it logs and
@@ -144,15 +145,18 @@ func serve() {
 		workQueue: make(chan *serveJob, 16),
 	}
 
-	// probe SABnzbd auth capabilities when an api base is configured
+	// probe whether the SABnzbd web interface has its own login
 	if conf.Sabnzbd.Host != "" && conf.Sabnzbd.Nzbkey != "" {
-		methods, err := sabnzbdAuthMethods(sabnzbdBaseURL())
+		loginURL, err := sabnzbdLoginURL(sabnzbdBaseURL())
 		if err != nil {
-			Log.Warn("Could not query SABnzbd auth methods: %v - login form disabled", err)
+			Log.Warn("Could not probe SABnzbd web login: %v - login form disabled", err)
 		} else {
 			state.sabAvailable = true
-			state.sabLogin = methods["login"]
-			Log.Debug("SABnzbd auth methods: %v", methods)
+			state.sabLogin = loginURL != ""
+			state.sabLoginURL = loginURL
+			if state.sabLogin {
+				Log.Debug("SABnzbd web login detected at %s", loginURL)
+			}
 		}
 		// un-stick a leftover queue pause from a previous run, best effort
 		if conf.Serve.SabnzbdPause {
@@ -254,7 +258,7 @@ func (s *serveState) handleLogin(w http.ResponseWriter, r *http.Request) {
 	ok := false
 	if s.sabLogin {
 		var err error
-		ok, err = sabnzbdLogin(sabnzbdBaseURL(), req.Username, req.Password)
+		ok, err = sabnzbdLogin(s.sabLoginURL, req.Username, req.Password)
 		if err != nil {
 			writeJSON(w, http.StatusBadGateway, map[string]any{"error": "SABnzbd auth unavailable"})
 			return
@@ -304,7 +308,7 @@ func (s *serveState) handleListJobs(w http.ResponseWriter, r *http.Request) {
 		Finished time.Time `json:"finished,omitempty"`
 		Error    string    `json:"error,omitempty"`
 	}
-	var out []jobJSON
+	out := []jobJSON{}
 	for _, j := range s.jobs.list() {
 		s.jobs.mu.Lock()
 		out = append(out, jobJSON{j.ID, j.Nzblnk, j.Status, j.Created, j.Finished, j.Error})
