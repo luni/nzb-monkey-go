@@ -36,4 +36,8 @@ bin
 oryxBuildBinary
 
 # dont ignore gh action yml
-!.github/workflows/build_and_publish.ymlnzb-monkey-go
+!.github/workflows/*.yml
+!.github/dependabot.yml
+
+# built binary
+nzb-monkey-go
