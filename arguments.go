@@ -92,8 +92,10 @@ func checkArguments() {
 	if args.Nzblnk != "" {
 		if nzblnk, err := url.Parse(args.Nzblnk); err == nil {
 			if query, err := url.ParseQuery(nzblnk.RawQuery); err == nil {
-				if h := query.Get("h"); h != "" && args.Header == "" {
-					args.Header = strings.TrimSpace(h)
+				if h := query.Get("h"); h != "" {
+					if args.Header == "" {
+						args.Header = strings.TrimSpace(h)
+					}
 				} else {
 					writeUsage(argParser)
 					Log.Error("Invalid NZBLNK URI: missing 'h' parameter")
@@ -123,6 +125,14 @@ func checkArguments() {
 				}
 			}
 		}
+	}
+
+	// make sure a header/subject was provided
+	// (covers NZBLNK URIs that could not be parsed at all)
+	if args.Header == "" {
+		writeUsage(argParser)
+		Log.Error("You must provide either --subject or a valid NZBLNK URI")
+		exit(1)
 	}
 
 	// date argument needs to be parsed because it can have two formats
@@ -158,9 +168,11 @@ func checkArguments() {
 		args.Title = args.Header
 	}
 
-	// replace a.b. in groups
+	// replace a.b. prefix in groups
 	for i, group := range args.Groups {
-		args.Groups[i] = strings.Replace(group, "a.b.", "alt.binaries.", 1)
+		if strings.HasPrefix(group, "a.b.") {
+			args.Groups[i] = "alt.binaries." + strings.TrimPrefix(group, "a.b.")
+		}
 	}
 
 	// unescape title
