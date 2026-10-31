@@ -80,7 +80,7 @@ function headers() {
 
 async function api(path, opts = {}) {
   opts.headers = Object.assign({}, headers(), opts.headers || {});
-  const r = await fetch('/api' + path, opts);
+  const r = await fetch('api' + path, opts);
   if (r.status === 401) { showLogin(); throw new Error('unauthorized'); }
   return r;
 }
@@ -99,7 +99,7 @@ function showMain() {
 
 async function init() {
   try {
-    const authz = await (await fetch('/api/authz')).json();
+    const authz = await (await fetch('api/authz')).json();
     $('loginUserFields').classList.toggle('hidden', !authz.sab_login);
     $('loginTokenField').classList.toggle('hidden', authz.sab_login);
     if (!authz.required) { showMain(); return; }
@@ -118,7 +118,7 @@ $('loginBtn').onclick = async () => {
     ? { username: $('loginUser').value, password: $('loginPass').value }
     : { password: $('loginToken').value };
   try {
-    const r = await fetch('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const r = await fetch('api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     const d = await r.json();
     if (!r.ok) { $('loginMsg').textContent = d.error || 'login failed'; return; }
     token = d.token;
