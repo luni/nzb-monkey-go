@@ -29,10 +29,10 @@ jobs:
             arch: arm64
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Go
-        uses: actions/setup-go@v4
+        uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod' # Use the Go version specified in go.mod
       - name: Set Ref Name Variable
@@ -103,7 +103,7 @@ jobs:
           fi
       - name: Upload Release Assets
         if: github.event_name == 'release' # Only on release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v3
         with:
           files: |
             nzb-monkey-go_*.zip
