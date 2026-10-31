@@ -78,7 +78,9 @@ func createMultipartBody(nzb string, filename string, compression string, compre
 
 		after := compressedBuffer.Len()
 		Log.Info("Compressed: %14s", prettyByteSize(after))
-		Log.Info("Compression: %12s", fmt.Sprintf("-%.2f%s", 100-(float64(after)/float64(before)*100), " %"))
+		if before > 0 {
+			Log.Info("Compression: %12s", fmt.Sprintf("-%.2f%s", 100-(float64(after)/float64(before)*100), " %"))
+		}
 
 		if _, err := io.Copy(part, compressedBuffer); err != nil {
 			return nil, "", err
