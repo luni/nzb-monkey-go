@@ -2,6 +2,11 @@
 
 #### Unreleased
 
+- service: new `--serve` web service mode with embedded single-page UI and JSON API (SERVE config section): accepts NZBLNK URIs and runs each job as a subprocess through the regular pipeline
+- service: SABnzbd integration - the SABnzbd queue is paused while a directsearch job runs (sabnzbd_pause) and the resulting NZB is pushed via the SABnzbd API; authentication reuses the SABnzbd web UI login when available, with an optional static token (sabnzbd_auth, token)
+- config: sabnzbd.ini import (`ini`, `use_server_credentials` in section SABNZBD): usenet server credentials of the enabled server with the lowest priority and the SABnzbd API settings fill unset configuration fields
+- deploy: generic systemd unit template with JoinsNamespaceOf support so the service can run in the same network namespace as SABnzbd
+- directsearch: fix missing GROUP selection and pool poisoning on cancellation in the overview cache path, fix `~` expansion for cache_path
 - directsearch: new optional local overview cache (`cache`, `cache_path`, `cache_size` in section DIRECTSEARCH): scanned message ranges are stored gzip compressed and skipped on subsequent searches, for any search term and for partially overlapping ranges
 - searchengines: generic Newznab support - any Newznab indexer can be registered via the NEWZNAB config section and weighted in SEARCHENGINES
 - various bug fixes, stability improvements and extended test coverage including full pipeline integration tests

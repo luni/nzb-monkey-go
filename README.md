@@ -50,6 +50,40 @@ cache_size = 500    # maximum cache size in MB
 - When the size limit is reached, the oldest ranges are evicted first.
 - As a rule of thumb, 500 MB covers roughly 20-25 million message headers (one or two full scans of a busy group); use 1 GB or more if you regularly scan several high-traffic groups.
 
+## Web service mode
+
+Running `nzb-monkey-go --serve` starts a persistent web service with a single-page UI and a JSON API that accepts NZBLNK URIs and runs them through the same pipeline as the CLI. Each job executes as a subprocess of the same binary, so the configuration file is re-read for every job.
+
+```ini
+[SERVE]
+listen = "127.0.0.1:8085"  # keep on loopback unless the service shares a protected namespace with its target
+token = ""                 # optional static access token
+sabnzbd_auth = true        # reuse the SABnzbd web UI login when available
+sabnzbd_pause = true       # pause the SABnzbd queue while a direct search runs
+```
+
+The API exposes `POST /api/jobs` (`{"nzblnk": "..."}`), `GET /api/jobs`, `GET /api/jobs/{id}`, `GET /api/jobs/{id}/log`, `DELETE /api/jobs/{id}` and `GET /api/healthz`. Jobs run one at a time and keep their logs in memory for the last 100 jobs.
+
+When SABnzbd reports a login page (`api?mode=auth` -> `login`), the service shows a login form and verifies the same credentials against SABnzbd before issuing a short-lived session token. When SABnzbd only uses an API key, the service relies on the same network boundary and the optional static `token` instead.
+
+### SABnzbd configuration import
+
+Instead of duplicating settings, the service can read a `sabnzbd.ini` file:
+
+```ini
+[SABNZBD]
+ini = "/path/to/sabnzbd.ini"
+use_server_credentials = true
+```
+
+The enabled usenet server with the lowest priority and the API key/web interface settings are imported, but only into fields that are empty in the nzb-monkey-go configuration - explicitly configured values always win.
+
+### Running next to SABnzbd
+
+The service must run in the **same network namespace** as SABnzbd so it can reach the SABnzbd API and so that usenet traffic takes the same route. If SABnzbd runs in a dedicated namespace, point `JoinsNamespaceOf` at the unit that provides it. `deploy/nzb-monkey-go.service` contains a generic systemd unit with placeholders - run the service as the same user as SABnzbd so it can read `sabnzbd.ini`.
+
+With `sabnzbd_pause = true`, every directsearch job pauses the SABnzbd queue first and resumes it afterwards, so the shared usenet connection limit of the account is not exceeded. Non-directsearch jobs do not pause the queue.
+
 ![Monkey-Gif](https://github.com/Tensai75/nzb-monkey-go/raw/main/resources/nzbmonkey-go.gif)
 
 ## Windows and Linux binaries
