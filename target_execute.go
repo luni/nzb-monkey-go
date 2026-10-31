@@ -55,7 +55,7 @@ func execute_push(nzb string, category string) error {
 				}
 				break
 
-			} else if str == "N" {
+			} else if str == "" || strings.EqualFold(str, "n") {
 				return fmt.Errorf("unable to save NZB file: path '%s' does not exist", path)
 			}
 		}
@@ -157,7 +157,7 @@ func delete_files(files []fs.DirEntry, path string, level int) {
 					delete_files(files, filePath, level+1)
 				}
 			} else {
-				if info.Mode().IsRegular() && time.Since(info.ModTime()) > time.Hour*time.Duration(conf.Execute.CleanUpMaxAge*24) && filepath.Ext(file.Name()) == ".nzb" {
+				if info.Mode().IsRegular() && time.Since(info.ModTime()) > time.Hour*time.Duration(conf.Execute.CleanUpMaxAge*24) && (filepath.Ext(file.Name()) == ".nzb" || filepath.Ext(file.Name()) == ".zip") {
 					Log.Info("Deleting file '%s'", filePath)
 					if err := os.Remove(filePath); err != nil {
 						Log.Warn("Error deleting file '%s' during cleanup: %v", filePath, err)
