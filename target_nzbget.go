@@ -30,7 +30,7 @@ func nzbget_getCategories() (Categories, error) {
 			return nil, err
 		}
 		if len(jsonResponse.Result) > 0 {
-			categoryRegexp := regexp.MustCompile(`Category\d+\.Name`)
+			categoryRegexp := regexp.MustCompile(`^Category\d+\.Name$`)
 			for _, item := range jsonResponse.Result {
 				if categoryRegexp.Match([]byte(item.Name)) {
 					categories = append(categories, item.Value)
