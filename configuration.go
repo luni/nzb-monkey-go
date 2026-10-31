@@ -44,6 +44,15 @@ type SABnzbd struct {
 	Addpaused         bool   `ini:"addpaused"`
 	Compression       string `ini:"compression"`
 	Timeout           int    `ini:"timeout"`
+	Ini               string `ini:"ini"`
+	UseServerCreds    bool   `ini:"use_server_credentials"`
+}
+
+type Serve struct {
+	Listen       string `ini:"listen"`
+	Token        string `ini:"token"`
+	SabnzbdAuth  bool   `ini:"sabnzbd_auth"`
+	SabnzbdPause bool   `ini:"sabnzbd_pause"`
 }
 
 type NZBGet struct {
@@ -128,6 +137,7 @@ type Configuration struct {
 	Searchengines []string           `ini:"-"` // will hold the search engines
 	Easynews      Easynews           `ini:"EASYNEWS"`
 	Directsearch  DirectSearch       `ini:"DIRECTSEARCH"`
+	Serve         Serve              `ini:"SERVE"`
 }
 
 // global configuration variable
@@ -158,6 +168,14 @@ func loadConfig() {
 			CachePath:                  "",
 			CacheSize:                  500,
 		},
+		Sabnzbd: SABnzbd{
+			UseServerCreds: true,
+		},
+		Serve: Serve{
+			Listen:       "127.0.0.1:8085",
+			SabnzbdAuth:  true,
+			SabnzbdPause: true,
+		},
 	}
 
 	iniOption := ini.LoadOptions{
@@ -173,6 +191,13 @@ func loadConfig() {
 	if err != nil {
 		Log.Error("Unable to parse configuration file: %s", err.Error())
 		exit(1)
+	}
+
+	// fill unset fields from the sabnzbd.ini if configured
+	if conf.Sabnzbd.Ini != "" {
+		if err := importSabnzbdIni(&conf, conf.Sabnzbd.Ini); err != nil {
+			Log.Warn("Failed to import sabnzbd.ini: %s", err.Error())
+		}
 	}
 
 	// load categories

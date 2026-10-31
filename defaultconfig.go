@@ -61,6 +61,29 @@ addpaused = false
 compression = "none"
 # Timeout in seconds for the connection (default = 30)
 timeout = 30
+# Path to a sabnzbd.ini file to import settings from; the enabled server
+# with the lowest priority and the API key/host settings are read from it
+# (default = "", disabled)
+ini = ""
+# Use the usenet server credentials from sabnzbd.ini for the direct search
+# (only fills values that are not configured in DIRECTSEARCH, default = true)
+use_server_credentials = true
+
+[SERVE]
+# Listen address for the web service started with --serve
+# Use a loopback address unless the service shares a protected network
+# namespace with its target (default = "127.0.0.1:8085")
+listen = "127.0.0.1:8085"
+# Optional static access token; when set it must be sent as bearer token or
+# entered on the login page (default = "")
+token = ""
+# Reuse the SABnzbd web interface authentication: when SABnzbd has a login
+# page, the service shows a login form and verifies credentials against
+# SABnzbd (default = true)
+sabnzbd_auth = true
+# Pause the SABnzbd queue while a direct search is running so the shared
+# usenet connection limit is not exceeded (default = true)
+sabnzbd_pause = true
 
 [NZBGET]
 # NZBGet Host
