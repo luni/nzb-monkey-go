@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
 	"sync"
@@ -69,6 +70,19 @@ func nzbdirectsearch(engine SearchEngine, name string) error {
 	}
 	if conf.Directsearch.BoundariesScannerTolerance <= 0 {
 		conf.Directsearch.BoundariesScannerTolerance = 30
+	}
+	if conf.Directsearch.Cache {
+		if conf.Directsearch.CacheSize <= 0 {
+			conf.Directsearch.CacheSize = 500
+		}
+		if conf.Directsearch.CachePath == "" {
+			if cacheDir, err := os.UserCacheDir(); err == nil {
+				conf.Directsearch.CachePath = filepath.Join(cacheDir, "nzb-monkey-go")
+			} else {
+				Log.Warn("Failed to determine default cache directory: %v - disabling overview cache", err)
+				conf.Directsearch.Cache = false
+			}
+		}
 	}
 
 	// set start and end date for search
@@ -178,47 +192,35 @@ func searchInGroup(group string) ([]*nzbparser.Nzb, error) {
 	Log.Info("First message ID set to: %s - Average date: %s", FormatNumberWithApostrophe(boundaries.FirstMessage.MessageID), boundaries.FirstMessage.Date.Local().Format("02.01.2006 15:04 MST"))
 	Log.Info("Last message ID set to:  %s - Average date: %s", FormatNumberWithApostrophe(boundaries.LastMessage.MessageID), boundaries.LastMessage.Date.Local().Format("02.01.2006 15:04 MST"))
 
-	// start peak rate measurement
-	Log.Debug("Starting peak rate measurement.")
-	ticker := time.NewTicker(1000 * time.Millisecond)
 	totalSearchRange := boundaries.LastMessage.MessageID - boundaries.FirstMessage.MessageID + 1
 	Log.Debug("Total search range: %s messages", FormatNumberWithApostrophe(totalSearchRange))
-	peakMessagesPerSecond := uint64(0)
-	peakBytesPerSecond := uint64(0)
-	peakRatesCtx, stopPeakRates := context.WithCancel(context.Background())
-	var peakRatesWg sync.WaitGroup
-	var stopPeakRateMeasurement = func() {
-		ticker.Stop()
-		stopPeakRates()
-		peakRatesWg.Wait()
-	}
-	peakRatesWg.Go(func() {
-		measurePeakRates(peakRatesCtx, ticker, &peakMessagesPerSecond, &peakBytesPerSecond)
-	})
 
 	// scan messages for header
 	Log.Info("Scanning messages %v to %v (%v messages in total)", FormatNumberWithApostrophe(boundaries.FirstMessage.MessageID), FormatNumberWithApostrophe(boundaries.LastMessage.MessageID), FormatNumberWithApostrophe(totalSearchRange))
 	startTime := time.Now()
-	nzbFiles, err := scanForHeader(boundaries)
+	nzbFiles, stats, err := scanForHeader(group, boundaries)
 	if err != nil {
-		stopPeakRateMeasurement()
 		return nil, fmt.Errorf("failed to scan messages: %v", err)
 	}
 
-	// stop peak rate measurement and display rates
-	stopPeakRateMeasurement()
 	// calculate duration
 	duration := time.Since(startTime)
+	linesRead := stats.linesRead
+	bytesRead := stats.bytesRead
+	peakMessagesPerSecond := stats.peakMessagesPerSecond
+	peakBytesPerSecond := stats.peakBytesPerSecond
+	if conf.Directsearch.Cache {
+		Log.Info("Cache: %s of %s messages served from local cache", FormatNumberWithApostrophe(uint(stats.cachedRead)), FormatNumberWithApostrophe(uint(stats.linesRead)))
+	}
 	formattedDuration := fmt.Sprintf("%02dm %02ds %03dms", int(duration/time.Minute), int((duration%time.Minute)/time.Second), int((duration%time.Second)/time.Millisecond))
 	// get lines read
-	linesRead := directSearch.GetLinesRead()
 	formattedLinesRead := FormatNumberWithApostrophe(uint(linesRead))
 	// calculate average rates (guard against zero duration)
 	var averageMessagesPerSecond uint64
 	var averageBytesPerSecond uint64
 	if duration.Milliseconds() > 0 {
 		averageMessagesPerSecond = uint64((float64(linesRead) / float64(duration.Milliseconds()) * 1000))
-		averageBytesPerSecond = uint64((float64(directSearch.GetBytesRead()) / float64(duration.Milliseconds())) * 1000)
+		averageBytesPerSecond = uint64((float64(bytesRead) / float64(duration.Milliseconds())) * 1000)
 	}
 	formattedAverageMessagesPerSecond := FormatNumberWithApostrophe(uint(averageMessagesPerSecond))
 	averageMbitPerSecond := float64(averageBytesPerSecond) * 8 / 1000000
@@ -274,8 +276,17 @@ func scanForBoundaries() (nntpDirectSearch.BoundariesScannerResult, error) {
 	return boundaries, nil
 }
 
-func scanForHeader(boundaries nntpDirectSearch.BoundariesScannerResult) ([]*nzbparser.Nzb, error) {
+type scanStats struct {
+	linesRead             uint64
+	bytesRead             uint64
+	cachedRead            uint64
+	peakMessagesPerSecond uint64
+	peakBytesPerSecond    uint64
+}
 
+func scanForHeader(group string, boundaries nntpDirectSearch.BoundariesScannerResult) ([]*nzbparser.Nzb, scanStats, error) {
+
+	var stats scanStats
 	firstMessageID := boundaries.FirstMessage.MessageID
 	lastMessageID := boundaries.LastMessage.MessageID
 	maxIterations := int(lastMessageID - firstMessageID + 1)
@@ -296,19 +307,70 @@ func scanForHeader(boundaries nntpDirectSearch.BoundariesScannerResult) ([]*nzbp
 		bar.Add(1)
 	}
 
-	// scan for header
-	nzbFiles, err := directSearch.MessageScanner(args.Header, firstMessageID, lastMessageID, iterationFunc)
-	bar.ChangeMax64(int64(directSearch.GetLinesRead()))
-	bar.Finish()
-	fmt.Println()
-	if err != nil {
-		return nzbFiles, err
+	// select the counter source and scan implementation
+	var getLinesRead, getBytesRead func() uint64
+	var nzbFiles []*nzbparser.Nzb
+	var scanErr error
+	var scan func()
+	if conf.Directsearch.Cache {
+		scanCtx, scanCancel := context.WithCancel(context.Background())
+		defer scanCancel()
+		cs := newCachedScan(
+			scanCtx,
+			pool,
+			group,
+			cacheGroupDir(conf.Directsearch.CachePath, group),
+			args.Header,
+			uint(conf.Directsearch.Step),
+			uint(conf.Directsearch.Connections),
+			uint(conf.Directsearch.OverviewRetries),
+			uint(conf.Directsearch.OverviewTimeout),
+			iterationFunc,
+		)
+		getLinesRead = cs.messagesRead.Load
+		getBytesRead = cs.bytesRead.Load
+		scan = func() {
+			nzbFiles, scanErr = cs.run(firstMessageID, lastMessageID)
+			stats.cachedRead = cs.cachedRead.Load()
+		}
+	} else {
+		getLinesRead = func() uint64 { return directSearch.GetLinesRead() }
+		getBytesRead = func() uint64 { return directSearch.GetBytesRead() }
+		scan = func() {
+			nzbFiles, scanErr = directSearch.MessageScanner(args.Header, firstMessageID, lastMessageID, iterationFunc)
+		}
 	}
 
-	return nzbFiles, nil
+	// start peak rate measurement
+	Log.Debug("Starting peak rate measurement.")
+	ticker := time.NewTicker(1000 * time.Millisecond)
+	peakRatesCtx, stopPeakRates := context.WithCancel(context.Background())
+	var peakRatesWg sync.WaitGroup
+	peakRatesWg.Go(func() {
+		measurePeakRates(peakRatesCtx, ticker, getLinesRead, getBytesRead, &stats.peakMessagesPerSecond, &stats.peakBytesPerSecond)
+	})
+
+	scan()
+	ticker.Stop()
+	stopPeakRates()
+	peakRatesWg.Wait()
+
+	stats.linesRead = getLinesRead()
+	stats.bytesRead = getBytesRead()
+	bar.ChangeMax64(int64(stats.linesRead))
+	bar.Finish()
+	fmt.Println()
+	if scanErr != nil {
+		return nzbFiles, stats, scanErr
+	}
+	if conf.Directsearch.Cache {
+		evictCache(conf.Directsearch.CachePath, int64(conf.Directsearch.CacheSize)*1024*1024)
+	}
+
+	return nzbFiles, stats, nil
 }
 
-func measurePeakRates(ctx context.Context, ticker *time.Ticker, peakMessagesPerSecond *uint64, peakBytesPerSecond *uint64) {
+func measurePeakRates(ctx context.Context, ticker *time.Ticker, getLinesRead func() uint64, getBytesRead func() uint64, peakMessagesPerSecond *uint64, peakBytesPerSecond *uint64) {
 	var lastMessages uint64
 	var lastBytes uint64
 	for {
@@ -316,8 +378,8 @@ func measurePeakRates(ctx context.Context, ticker *time.Ticker, peakMessagesPerS
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			currentMessages := directSearch.GetLinesRead()
-			currentBytes := directSearch.GetBytesRead()
+			currentMessages := getLinesRead()
+			currentBytes := getBytesRead()
 			messagesThisSecond := currentMessages - lastMessages
 			bytesThisSecond := currentBytes - lastBytes
 			if messagesThisSecond > *peakMessagesPerSecond {

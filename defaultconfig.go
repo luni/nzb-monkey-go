@@ -198,5 +198,12 @@ one_instance_only = true
 boundaries_scanner_step = 500
 # Tolerance in seconds for the boundaries scanner to consider a date close enough to the target (default = 30)
 boundaries_scanner_tolerance = 30
+# Cache downloaded message overviews locally and serve already scanned message ranges
+# from the cache instead of the usenet server (default = false)
+cache = false
+# Path of the overview cache directory (default = system cache dir, e.g. ~/.cache/nzb-monkey-go)
+cache_path = ""
+# Maximum size of the overview cache in MB (default = 500); oldest entries are removed first
+cache_size = 500
 `, "\n")
 }

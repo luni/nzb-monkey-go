@@ -111,6 +111,9 @@ type DirectSearch struct {
 	OneInstanceOnly            bool   `ini:"one_instance_only"`
 	BoundariesScannerStep      int    `ini:"boundaries_scanner_step"`
 	BoundariesScannerTolerance int    `ini:"boundaries_scanner_tolerance"`
+	Cache                      bool   `ini:"cache"`
+	CachePath                  string `ini:"cache_path"`
+	CacheSize                  int    `ini:"cache_size"`
 }
 
 // configuration structure
@@ -151,6 +154,9 @@ func loadConfig() {
 			OneInstanceOnly:            true, // Default must stay aligned with the generated config's one_instance_only value.
 			BoundariesScannerStep:      500,
 			BoundariesScannerTolerance: 30,
+			Cache:                      false,
+			CachePath:                  "",
+			CacheSize:                  500,
 		},
 	}
 
