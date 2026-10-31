@@ -38,7 +38,6 @@ var (
 	results                   = make([]Result, 0)
 	filesColor, segmentsColor func(a ...interface{}) string
 	red                       = color.New(color.FgRed).SprintFunc()
-	yellow                    = color.New(color.FgYellow).SprintFunc()
 	green                     = color.New(color.FgGreen).SprintFunc()
 	blue                      = color.New(color.FgCyan).SprintFunc()
 )
@@ -186,7 +185,7 @@ func processResult(nzb *nzbparser.Nzb, name string) {
 	} else {
 		segmentsColor = red
 	}
-	Log.Info("Found:    %s", green(fmt.Sprintf("%s (%s)", result.Nzb.Files[0].Subject, humanize.Bytes(uint64(result.Nzb.Bytes)))))
+	Log.Info("Found:    %s", green(fmt.Sprintf("%s (%s)", result.Nzb.Files[0].Subject, humanize.Bytes(uint64(max(result.Nzb.Bytes, 0))))))
 	Log.Info("Files:    %s", filesColor(fmt.Sprintf("%d/%d (Missing files: %d)", result.Nzb.Files.Len(), result.Nzb.TotalFiles, result.FilesMissing)))
 	Log.Info("Segments: %s", segmentsColor(fmt.Sprintf("%d/%d (Missing segments: %f %%)", result.Nzb.Segments, result.Nzb.TotalSegments, result.SegmentsMissingPercent)))
 
