@@ -2,6 +2,10 @@ package main
 
 import (
 	"math"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Tensai75/nzbparser"
@@ -72,4 +76,63 @@ func TestProcessResultMissingPercent(t *testing.T) {
 	if results[0].SegmentsMissing != 1 {
 		t.Errorf("SegmentsMissing = %d, want 1", results[0].SegmentsMissing)
 	}
+}
+
+// end-to-end: processFoundNzb must serialize the NZB, push it to the
+// EXECUTE target (file written to disk) and exit 0; verified via
+// subprocess because exit() terminates via os.Exit
+func TestProcessFoundNzbExecute(t *testing.T) {
+	dir := t.TempDir()
+
+	cmd := exec.Command(os.Args[0], "-test.run=TestProcessFoundNzbHelperProcess")
+	cmd.Env = append(os.Environ(),
+		"GO_TEST_HELPER=3",
+		"TEST_SAVEDIR="+dir,
+	)
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("expected exit code 0, got %v", err)
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 file in save dir, got %d", len(entries))
+	}
+	data, err := os.ReadFile(filepath.Join(dir, entries[0].Name()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `meta type="title"`) || !strings.Contains(string(data), "e2e title") {
+		t.Errorf("written NZB does not contain the title meta: %s", data)
+	}
+}
+
+// helper process for the end-to-end test; not a real test when run by the parent
+func TestProcessFoundNzbHelperProcess(t *testing.T) {
+	if os.Getenv("GO_TEST_HELPER") != "3" {
+		return
+	}
+	conf.General.Targets = []string{"EXECUTE"}
+	conf.General.Success_wait_time = 1 // keep the exit countdown short
+	conf.Execute = Execute{
+		Nzbsavepath: os.Getenv("TEST_SAVEDIR"),
+		Dontexecute: true,
+	}
+	args.Title = "e2e title"
+
+	nzb := &nzbparser.Nzb{
+		Files:         nzbparser.NzbFiles{{Subject: "test file"}},
+		TotalFiles:    1,
+		TotalSegments: 1,
+		Segments:      1,
+	}
+	processFoundNzb(&Result{
+		SearchEngine:     "TestEngine",
+		Nzb:              nzb,
+		FilesComplete:    true,
+		SegmentsComplete: true,
+	})
+	os.Exit(9) // processFoundNzb must never return
 }

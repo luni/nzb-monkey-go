@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -116,5 +117,87 @@ func TestSynologydsAuthenticateLoginFailure(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "400") {
 		t.Errorf("error = %q, want it to contain error code 400", err.Error())
+	}
+}
+
+// full push flow: authenticate then upload; the extract_password field
+// must contain the escaped password (regression test: a " in the password
+// produced malformed JSON in the field value)
+func TestSynologydsPush(t *testing.T) {
+	var mu sync.Mutex
+	var form map[string][]string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost:
+			if err := r.ParseMultipartForm(1 << 20); err != nil {
+				t.Errorf("ParseMultipartForm: %v", err)
+			}
+			mu.Lock()
+			form = r.MultipartForm.Value
+			mu.Unlock()
+			fmt.Fprint(w, `{"success":true}`)
+		case r.URL.Query().Get("api") == "SYNO.API.Info":
+			fmt.Fprint(w, `{"success":true,"data":{
+				"SYNO.DownloadStation2.Task":{"path":"task.cgi","minVersion":1,"maxVersion":2},
+				"SYNO.API.Auth":{"path":"auth.cgi","maxVersion":6}
+			}}`)
+		default:
+			fmt.Fprint(w, `{"success":true,"data":{"sid":"test-sid-123"}}`)
+		}
+	}))
+	defer srv.Close()
+	synologydsTestConf(t, srv)
+
+	args.Title = "test title"
+	args.Password = `esc"ape\me`
+
+	if err := synologyds_push("<nzb>data</nzb>", ""); err != nil {
+		t.Fatalf("push: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if form == nil {
+		t.Fatal("server never received the multipart upload")
+	}
+	if got := form["extract_password"]; len(got) != 1 || got[0] != `"esc\"ape\\me"` {
+		t.Errorf("extract_password = %v, want escaped %q", got, `"esc\"ape\\me"`)
+	}
+	if got := form["method"]; len(got) != 1 || got[0] != "create" {
+		t.Errorf("method = %v, want [create]", got)
+	}
+	if got := form["size"]; len(got) != 1 || got[0] != "15" {
+		t.Errorf("size = %v, want [15]", got)
+	}
+}
+
+// an API error response on upload must surface the Synology error code
+func TestSynologydsPushError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost:
+			fmt.Fprint(w, `{"success":false,"error":{"code":108}}`)
+		case r.URL.Query().Get("api") == "SYNO.API.Info":
+			fmt.Fprint(w, `{"success":true,"data":{
+				"SYNO.DownloadStation2.Task":{"path":"task.cgi","minVersion":1,"maxVersion":2},
+				"SYNO.API.Auth":{"path":"auth.cgi","maxVersion":6}
+			}}`)
+		default:
+			fmt.Fprint(w, `{"success":true,"data":{"sid":"test-sid-123"}}`)
+		}
+	}))
+	defer srv.Close()
+	synologydsTestConf(t, srv)
+
+	args.Title = "test"
+	args.Password = ""
+
+	err := synologyds_push("<nzb>data</nzb>", "")
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "108") {
+		t.Errorf("error = %q, want it to contain code 108", err.Error())
 	}
 }

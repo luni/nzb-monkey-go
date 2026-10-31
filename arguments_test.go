@@ -137,6 +137,23 @@ func TestCheckArgumentsDateFormat(t *testing.T) {
 	}
 }
 
+// an invalid --date value from the CLI must fail, unlike an invalid
+// NZBLNK 'd' parameter which only warns
+func TestCheckArgumentsInvalidCliDate(t *testing.T) {
+	cmd := exec.Command(os.Args[0], "-test.run=TestCheckArgumentsHelperProcess")
+	cmd.Env = append(os.Environ(),
+		"GO_TEST_HELPER=1",
+		"TEST_NZBLNK=",
+		"TEST_SUBJECT=header",
+		"TEST_DATE=garbage",
+	)
+	err := cmd.Run()
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 1 {
+		t.Fatalf("expected exit code 1, got %v", err)
+	}
+}
+
 // an invalid 'd' parameter in a NZBLNK warns but does not fail
 func TestCheckArgumentsInvalidNzblnkDate(t *testing.T) {
 	resetArgs(Args{Nzblnk: "nzblnk://?h=header&d=garbage"})
@@ -187,6 +204,7 @@ func TestCheckArgumentsHelperProcess(t *testing.T) {
 	conf.General.Error_wait_time = 1 // keep the exit countdown short
 	args.Nzblnk = os.Getenv("TEST_NZBLNK")
 	args.Header = os.Getenv("TEST_SUBJECT")
+	args.Date = os.Getenv("TEST_DATE")
 	checkArguments()
 	os.Exit(0) // checkArguments must not return on failure paths
 }

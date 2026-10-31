@@ -115,3 +115,91 @@ func TestJsonSearchSuccess(t *testing.T) {
 		t.Errorf("SearchEngine = %q, want %q", results[0].SearchEngine, "TestEngine")
 	}
 }
+
+// htmlSearch must extract the id via regex, build the download URL and
+// process the NZB
+func TestHtmlSearchSuccess(t *testing.T) {
+	args = struct{ Args }{Args: Args{Header: "test", Title: "test"}}
+	results = nil
+	conf.Nzbcheck = NZBcheck{BestNZB: true, MaxMissingFiles: 99, MaxMissingSegmentsPercent: 100}
+
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		switch r.URL.Path {
+		case "/search":
+			fmt.Fprint(w, `<a href="/nzb:abc123/">link</a>`)
+		case "/dl/abc123.nzb":
+			fmt.Fprint(w, testNzb)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	engine := SearchEngine{
+		name:        "TestEngine",
+		searchURL:   srv.URL + "/search?q=%s",
+		downloadURL: srv.URL + "/dl/%s.nzb",
+		regexString: `href="/nzb:(.+?)/"`,
+		groupNo:     1,
+		search:      htmlSearch,
+	}
+
+	if err := engine.search(engine, engine.name); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotPath != "/dl/abc123.nzb" {
+		t.Errorf("download path = %q, want /dl/abc123.nzb", gotPath)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result appended, got %d", len(results))
+	}
+}
+
+// htmlSearch error paths must return errors, not panic
+func TestHtmlSearchErrors(t *testing.T) {
+	args = struct{ Args }{Args: Args{Header: "test"}}
+
+	cases := []struct {
+		name        string
+		regexString string
+		groupNo     int
+		searchBody  string
+	}{
+		{"no regex match", `href="/nzb:(.+?)/"`, 1, `<html>no results</html>`},
+		{"invalid regex", `([unclosed`, 1, `href="/nzb:abc/"`},
+		{"group number out of range", `href="/nzb:(.+?)/"`, 5, `href="/nzb:abc/"`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			engine, srv := testEngine(tc.searchBody)
+			defer srv.Close()
+			engine.search = htmlSearch
+			engine.regexString = tc.regexString
+			engine.groupNo = tc.groupNo
+			engine.jsonPath = ""
+
+			if err := engine.search(engine, engine.name); err == nil {
+				t.Error("expected error, got nil")
+			}
+		})
+	}
+}
+
+// cleanSearchString applies the engine's stringRegx replacements and
+// silently skips broken patterns
+func TestCleanSearchString(t *testing.T) {
+	nzbking := searchEngines["nzbking"]
+	if got := nzbking.cleanSearchString("some.release.name_x264"); got != "some release name x264" {
+		t.Errorf("cleanSearchString = %q, want %q", got, "some release name x264")
+	}
+
+	broken := SearchEngine{stringRegx: []RegexPattern{
+		{pattern: `([unclosed`, replacement: "X"},
+		{pattern: `\.`, replacement: " "},
+	}}
+	if got := broken.cleanSearchString("a.b"); got != "a b" {
+		t.Errorf("cleanSearchString = %q, want %q", got, "a b")
+	}
+}

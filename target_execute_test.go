@@ -1,8 +1,11 @@
 package main
 
 import (
+	"archive/zip"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -30,6 +33,89 @@ func TestWriteFile(t *testing.T) {
 	}
 	if filepath.Ext(path) != ".zip" {
 		t.Errorf("path = %q, want .zip extension", path)
+	}
+
+	// verify the zip actually contains the .nzb
+	archive, err := zip.OpenReader(path)
+	if err != nil {
+		t.Fatalf("OpenReader: %v", err)
+	}
+	defer archive.Close()
+	if len(archive.File) != 1 || archive.File[0].Name != "inner.nzb" {
+		t.Fatalf("zip entries = %v, want [inner.nzb]", archive.File)
+	}
+	rc, err := archive.File[0].Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rc.Close()
+	content, err := io.ReadAll(rc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "<nzb/>" {
+		t.Errorf("zipped content = %q, want <nzb/>", content)
+	}
+}
+
+// execute_push must save the NZB into an existing directory without
+// prompting and sanitize odd titles into a usable filename
+func TestExecutePush(t *testing.T) {
+	dir := t.TempDir()
+	conf.Execute = Execute{
+		Nzbsavepath: dir,
+		Dontexecute: true,
+	}
+	args.Title = `release<title>|name`
+
+	if err := execute_push("<nzb>data</nzb>", ""); err != nil {
+		t.Fatalf("execute_push: %v", err)
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 file in save dir, got %d", len(entries))
+	}
+	name := entries[0].Name()
+	if filepath.Ext(name) != ".nzb" {
+		t.Errorf("file = %q, want .nzb extension", name)
+	}
+	if strings.ContainsAny(name, "<>|") {
+		t.Errorf("file = %q, want sanitized name without <>|", name)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, name))
+	if err != nil || string(data) != "<nzb>data</nzb>" {
+		t.Errorf("file content = %q, err=%v", data, err)
+	}
+}
+
+// a title consisting only of invalid characters must still produce a
+// file - svach falls back to the md5 hash of the input
+func TestExecutePushInvalidCharsTitle(t *testing.T) {
+	dir := t.TempDir()
+	conf.Execute = Execute{
+		Nzbsavepath: dir,
+		Dontexecute: true,
+	}
+	args.Title = "***"
+
+	if err := execute_push("<nzb/>", ""); err != nil {
+		t.Fatalf("execute_push: %v", err)
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 file in save dir, got %d", len(entries))
+	}
+	name := entries[0].Name()
+	if name != "8a7ab20ec0ab3262ce329c7dcb399a4e.nzb" {
+		t.Errorf("file = %q, want md5-hashed fallback name", name)
 	}
 }
 
