@@ -20,21 +20,37 @@ func registerProtocol() {
 	k, _, err = registry.CreateKey(baseKey, basePath, permission)
 
 	// set description
-	err = k.SetStringValue("", appName+" app")
-	err = k.SetStringValue("URL Protocol", "")
+	if err == nil {
+		err = k.SetStringValue("", appName+" app")
+	}
+	if err == nil {
+		err = k.SetStringValue("URL Protocol", "")
+	}
 
 	// set icon
-	k, _, err = registry.CreateKey(baseKey, basePath+"\\DefaultIcon", permission)
-	err = k.SetStringValue("", appExec+",1")
+	if err == nil {
+		k, _, err = registry.CreateKey(baseKey, basePath+"\\DefaultIcon", permission)
+	}
+	if err == nil {
+		err = k.SetStringValue("", appExec+",1")
+	}
 
 	// create tree
-	_, _, err = registry.CreateKey(baseKey, basePath+"\\shell", permission)
-	_, _, err = registry.CreateKey(baseKey, basePath+"\\shell\\open", permission)
-	k, _, err = registry.CreateKey(baseKey, basePath+"\\shell\\open\\command", permission)
+	if err == nil {
+		_, _, err = registry.CreateKey(baseKey, basePath+"\\shell", permission)
+	}
+	if err == nil {
+		_, _, err = registry.CreateKey(baseKey, basePath+"\\shell\\open", permission)
+	}
+	if err == nil {
+		k, _, err = registry.CreateKey(baseKey, basePath+"\\shell\\open\\command", permission)
+	}
 
 	// set open command
-	cmdString := fmt.Sprintf("\"%s\" \"%%1\"", appExec)
-	err = k.SetExpandStringValue("", cmdString)
+	if err == nil {
+		cmdString := fmt.Sprintf("\"%s\" \"%%1\"", appExec)
+		err = k.SetExpandStringValue("", cmdString)
+	}
 
 	if err != nil {
 		Log.Error("Unable to register 'nzblnk' URL protocol: %s", err.Error())
