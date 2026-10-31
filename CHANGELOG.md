@@ -1,5 +1,12 @@
 ## Change log
 
+#### Unreleased
+
+- directsearch: new optional local overview cache (`cache`, `cache_path`, `cache_size` in section DIRECTSEARCH): scanned message ranges are stored gzip compressed and skipped on subsequent searches, for any search term and for partially overlapping ranges
+- searchengines: generic Newznab support - any Newznab indexer can be registered via the NEWZNAB config section and weighted in SEARCHENGINES
+- various bug fixes, stability improvements and extended test coverage including full pipeline integration tests
+- CI: GitHub Actions workflow running gofmt, go vet, race-enabled tests and cross-platform builds; dependabot enabled
+
 #### v0.3.3
 
 - directsearch: fix: avoid overview reader restart deadlock on simultaneous timeouts during message scan
