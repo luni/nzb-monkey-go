@@ -9,12 +9,12 @@ import (
 )
 
 type General struct {
-	Target            string `ini:"target"`
-	Targets           []string
-	Categorize        string `ini:"categorize"`
-	Success_wait_time int    `ini:"success_wait_time"`
-	Error_wait_time   int    `ini:"error_wait_time"`
-	Debug             bool   `ini:"debug"`
+	Target            string   `ini:"target"`
+	Targets           []string `ini:"-"`
+	Categorize        string   `ini:"categorize"`
+	Success_wait_time int      `ini:"success_wait_time"`
+	Error_wait_time   int      `ini:"error_wait_time"`
+	Debug             bool     `ini:"debug"`
 }
 
 type Execute struct {
@@ -92,6 +92,7 @@ type DirectSearch struct {
 	Host                       string `ini:"host"`
 	Port                       int    `ini:"port"`
 	SSL                        bool   `ini:"ssl"`
+	SkipCheck                  bool   `ini:"skip_check"`
 	Username                   string `ini:"username"`
 	Password                   string `ini:"password"`
 	Connections                int    `ini:"connections"`
@@ -132,6 +133,7 @@ func loadConfig() {
 
 	conf = Configuration{
 		Directsearch: DirectSearch{
+			SkipCheck:                  true, // must stay aligned with the generated config's skip_check value.
 			Connections:                20,
 			Hours:                      12,
 			ForwardHours:               12,
@@ -204,7 +206,10 @@ func loadConfig() {
 			engines = append(engines, engine)
 		}
 		sort.SliceStable(engines, func(i, j int) bool {
-			return searchengines[engines[i]] < searchengines[engines[j]]
+			if searchengines[engines[i]] != searchengines[engines[j]] {
+				return searchengines[engines[i]] < searchengines[engines[j]]
+			}
+			return engines[i] < engines[j]
 		})
 		// add the searchengines to the config
 		conf.Searchengines = engines

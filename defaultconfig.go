@@ -59,6 +59,8 @@ category = ""
 addpaused = false
 # Add compression on upload, either "none" or "zip"
 compression = "none"
+# Timeout in seconds for the connection (default = 30)
+timeout = 30
 
 [NZBGET]
 # NZBGet Host
@@ -79,6 +81,8 @@ basepath = ""
 category = ""
 # Add the nzb paused to the queue
 addpaused = false
+# Timeout in seconds for the connection (default = 30)
+timeout = 30
 
 [SYNOLOGYDLS]
 # Downloadstation Host
@@ -95,6 +99,8 @@ user = ""
 pass = ""
 # Basepath
 basepath = ""
+# Timeout in seconds for the connection (default = 30)
+timeout = 30
 
 [NZBCheck]
 # Don't skip failed nzb
@@ -147,6 +153,8 @@ host = "news-eu.newshosting.com"
 port = 119
 # Use SSL
 ssl = false
+# skip SSL security checks (e.g. for self signed certificates)
+skip_check = true
 # Your usenet account username
 username = ""
 # Your usenet account password

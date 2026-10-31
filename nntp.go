@@ -19,7 +19,7 @@ func initNntpPool() error {
 		Host:                  conf.Directsearch.Host,
 		Port:                  uint32(conf.Directsearch.Port),
 		SSL:                   conf.Directsearch.SSL,
-		SkipSSLCheck:          true,
+		SkipSSLCheck:          conf.Directsearch.SkipCheck,
 		User:                  conf.Directsearch.Username,
 		Pass:                  conf.Directsearch.Password,
 		ConnWaitTime:          time.Duration(10) * time.Second,
