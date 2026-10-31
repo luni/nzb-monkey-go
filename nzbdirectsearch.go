@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -79,8 +80,13 @@ func nzbdirectsearch(engine SearchEngine, name string) error {
 			if cacheDir, err := os.UserCacheDir(); err == nil {
 				conf.Directsearch.CachePath = filepath.Join(cacheDir, "nzb-monkey-go")
 			} else {
-				Log.Warn("Failed to determine default cache directory: %v - disabling overview cache", err)
+				Log.Warn("Failed to determine user cache dir for directsearch cache - cache disabled")
 				conf.Directsearch.Cache = false
+			}
+		}
+		if rest, ok := strings.CutPrefix(conf.Directsearch.CachePath, "~/"); ok {
+			if home, err := os.UserHomeDir(); err == nil {
+				conf.Directsearch.CachePath = filepath.Join(home, rest)
 			}
 		}
 	}
@@ -325,6 +331,10 @@ func scanForHeader(group string, boundaries nntpDirectSearch.BoundariesScannerRe
 			uint(conf.Directsearch.Connections),
 			uint(conf.Directsearch.OverviewRetries),
 			uint(conf.Directsearch.OverviewTimeout),
+			// cap merged files at a quarter of the cache limit so eviction
+			// can drop the oldest parts of an oversized scan instead of
+			// deleting one merged file covering everything
+			int64(conf.Directsearch.CacheSize)*1024*1024/4,
 			iterationFunc,
 		)
 		getLinesRead = cs.messagesRead.Load

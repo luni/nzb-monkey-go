@@ -229,8 +229,10 @@ func (w *overviewCacheWriter) abort() {
 // single file each. Gzip members can simply be concatenated, so merging is a
 // cheap copy - no recompression. Only strictly adjacent ranges
 // (prev.last+1 == next.first) are merged; overlapping files are left alone
-// because the effective read range logic handles them.
-func compactCacheDir(dir string) {
+// because the effective read range logic handles them. maxMergedSize bounds
+// the size of a merged file so that eviction can drop the oldest parts of a
+// scan instead of having to delete one oversized file covering everything.
+func compactCacheDir(dir string, maxMergedSize int64) {
 	intervals := listCacheIntervals(dir)
 	if len(intervals) < 2 {
 		return
@@ -238,18 +240,25 @@ func compactCacheDir(dir string) {
 	// group strictly-adjacent runs; an overlapping file starts its own group
 	// and does not block adjacency between the surrounding files
 	var groups [][]overviewInterval
+	var groupSizes []int64
 	for _, iv := range intervals {
+		size := int64(0)
+		if fi, err := os.Stat(iv.file); err == nil {
+			size = fi.Size()
+		}
 		joined := -1
 		for i := range groups {
-			if iv.first == groups[i][len(groups[i])-1].last+1 {
+			if iv.first == groups[i][len(groups[i])-1].last+1 && groupSizes[i]+size <= maxMergedSize {
 				joined = i
 				break
 			}
 		}
 		if joined >= 0 {
 			groups[joined] = append(groups[joined], iv)
+			groupSizes[joined] += size
 		} else {
 			groups = append(groups, []overviewInterval{iv})
+			groupSizes = append(groupSizes, size)
 		}
 	}
 	for _, group := range groups {
@@ -292,17 +301,18 @@ func compactCacheDir(dir string) {
 
 // cachedScan holds the state of one cached message scan.
 type cachedScan struct {
-	ctx         context.Context
-	ctxCancel   context.CancelFunc
-	pool        nntpPool.ConnectionPool
-	group       string
-	cacheDir    string
-	header      string
-	headerLower string
-	step        uint
-	connections uint
-	retries     uint
-	timeout     time.Duration
+	ctx           context.Context
+	ctxCancel     context.CancelFunc
+	pool          nntpPool.ConnectionPool
+	group         string
+	cacheDir      string
+	header        string
+	headerLower   string
+	step          uint
+	connections   uint
+	retries       uint
+	timeout       time.Duration
+	maxMergedSize int64
 
 	linesChan       chan string
 	results         map[string]map[string]nzbparser.NzbFile
@@ -316,26 +326,27 @@ type cachedScan struct {
 	iteration    func()
 }
 
-func newCachedScan(ctx context.Context, pool nntpPool.ConnectionPool, group string, cacheDir string, header string, step uint, connections uint, retries uint, timeoutSeconds uint, iterationFunc func()) *cachedScan {
+func newCachedScan(ctx context.Context, pool nntpPool.ConnectionPool, group string, cacheDir string, header string, step uint, connections uint, retries uint, timeoutSeconds uint, maxMergedSize int64, iterationFunc func()) *cachedScan {
 	scanCtx, cancel := context.WithCancel(ctx)
 	if iterationFunc == nil {
 		iterationFunc = func() {}
 	}
 	return &cachedScan{
-		ctx:         scanCtx,
-		ctxCancel:   cancel,
-		pool:        pool,
-		group:       group,
-		cacheDir:    cacheDir,
-		header:      header,
-		headerLower: strings.ToLower(header),
-		step:        step,
-		connections: connections,
-		retries:     retries,
-		timeout:     time.Duration(timeoutSeconds) * time.Second,
-		linesChan:   make(chan string, 10000),
-		results:     make(map[string]map[string]nzbparser.NzbFile),
-		iteration:   iterationFunc,
+		ctx:           scanCtx,
+		ctxCancel:     cancel,
+		pool:          pool,
+		group:         group,
+		cacheDir:      cacheDir,
+		header:        header,
+		headerLower:   strings.ToLower(header),
+		step:          step,
+		connections:   connections,
+		retries:       retries,
+		timeout:       time.Duration(timeoutSeconds) * time.Second,
+		maxMergedSize: maxMergedSize,
+		linesChan:     make(chan string, 10000),
+		results:       make(map[string]map[string]nzbparser.NzbFile),
+		iteration:     iterationFunc,
 	}
 }
 
@@ -476,8 +487,18 @@ func (ms *cachedScan) fetchChunk(first uint, last uint) {
 }
 
 func (ms *cachedScan) fetchChunkOnce(first uint, last uint) error {
-	conn, err := ms.pool.Get(ms.ctx)
+	// acquire the connection with the non-cancelable context: a scan-level
+	// cancel must not close the shared pool (pool.Get closes the pool when
+	// the passed context is done)
+	conn, err := ms.pool.Get(context.WithoutCancel(ms.ctx))
 	if err != nil {
+		return err
+	}
+	// select the group on every acquired connection - pooled connections
+	// keep no group state between users
+	if _, _, _, err := conn.Group(ms.group); err != nil {
+		conn.Close()
+		ms.pool.Put(conn)
 		return err
 	}
 	reader, err := conn.OverviewReader(int(first), int(last))
@@ -629,7 +650,7 @@ schedule:
 	lineWG.Wait()
 
 	// consolidate adjacent cache files into continuous ranges
-	compactCacheDir(ms.cacheDir)
+	compactCacheDir(ms.cacheDir, ms.maxMergedSize)
 
 	if err := ms.lastError.Load(); err != nil {
 		return nil, err.(error)
