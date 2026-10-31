@@ -34,13 +34,19 @@ func nzbdirectsearch(engine SearchEngine, name string) error {
 	if conf.Directsearch.Username == "" || conf.Directsearch.Password == "" {
 		return errors.New("no or incomplete credentials for usenet server")
 	}
+	if conf.Directsearch.Host == "" {
+		return errors.New("no usenet server host provided")
+	}
+	if conf.Directsearch.Port <= 0 || conf.Directsearch.Port > 65535 {
+		return errors.New("invalid usenet server port")
+	}
 	if len(args.Groups) == 0 {
 		return errors.New("no groups provided")
 	}
 	if args.UnixDate == 0 {
 		return errors.New("no date provided")
 	}
-	if conf.Directsearch.Connections == 0 {
+	if conf.Directsearch.Connections <= 0 {
 		conf.Directsearch.Connections = 20
 	}
 	if conf.Directsearch.Hours == 0 {
@@ -269,6 +275,9 @@ func scanForHeader(boundaries nntpDirectSearch.BoundariesScannerResult) ([]*nzbp
 
 	firstMessageID := boundaries.FirstMessage.MessageID
 	lastMessageID := boundaries.LastMessage.MessageID
+	if lastMessageID < firstMessageID {
+		return nil, fmt.Errorf("invalid message range: first message ID %d is greater than last message ID %d", firstMessageID, lastMessageID)
+	}
 	maxIterations := int(lastMessageID - firstMessageID + 1)
 
 	// setup progress bar
