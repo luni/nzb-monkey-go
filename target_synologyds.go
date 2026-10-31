@@ -62,7 +62,7 @@ func synologyds_push(nzb string, category string) error {
 		writer.WriteField("mtime", fmt.Sprintf("%d", time.Now().Unix()))
 		writer.WriteField("size", fmt.Sprintf("%d", len(nzb)))
 		writer.WriteField("file", "[\"torrent\"]")
-		writer.WriteField("extract_password", fmt.Sprintf("\"%s\"", args.Password))
+		writer.WriteField("extract_password", fmt.Sprintf("\"%s\"", strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(args.Password)))
 
 		// add the nzb file
 		part, _ := writer.CreateFormFile("torrent", args.Title+".nzb")
