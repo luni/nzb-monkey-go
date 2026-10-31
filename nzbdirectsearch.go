@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/user"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -405,7 +406,13 @@ func measurePeakRates(ctx context.Context, ticker *time.Ticker, getLinesRead fun
 }
 
 func acquireLock() (*fslock.Lock, error) {
-	lockFilePath := filepath.Join(tempPath, "directSearch.lock")
+	lockFileName := "directSearch.lock"
+	// include the uid so the shared lock file does not collide with one
+	// created by another user in the shared temp dir
+	if u, err := user.Current(); err == nil && u.Uid != "" {
+		lockFileName = fmt.Sprintf("directSearch-%s.lock", u.Uid)
+	}
+	lockFilePath := filepath.Join(tempPath, lockFileName)
 	lock := fslock.New(lockFilePath)
 	err := lock.TryLock()
 	if err == nil {
