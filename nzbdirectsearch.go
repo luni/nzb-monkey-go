@@ -49,25 +49,25 @@ func nzbdirectsearch(engine SearchEngine, name string) error {
 	if conf.Directsearch.Connections <= 0 {
 		conf.Directsearch.Connections = 20
 	}
-	if conf.Directsearch.Hours == 0 {
+	if conf.Directsearch.Hours <= 0 {
 		conf.Directsearch.Hours = 12
 	}
-	if conf.Directsearch.ForwardHours == 0 {
+	if conf.Directsearch.ForwardHours <= 0 {
 		conf.Directsearch.ForwardHours = 12
 	}
-	if conf.Directsearch.Step == 0 {
+	if conf.Directsearch.Step <= 0 {
 		conf.Directsearch.Step = 20000
 	}
-	if conf.Directsearch.OverviewTimeout == 0 {
+	if conf.Directsearch.OverviewTimeout <= 0 {
 		conf.Directsearch.OverviewTimeout = 5
 	}
-	if conf.Directsearch.OverviewRetries == 0 {
+	if conf.Directsearch.OverviewRetries <= 0 {
 		conf.Directsearch.OverviewRetries = 3
 	}
-	if conf.Directsearch.BoundariesScannerStep == 0 {
+	if conf.Directsearch.BoundariesScannerStep <= 0 {
 		conf.Directsearch.BoundariesScannerStep = 500
 	}
-	if conf.Directsearch.BoundariesScannerTolerance == 0 {
+	if conf.Directsearch.BoundariesScannerTolerance <= 0 {
 		conf.Directsearch.BoundariesScannerTolerance = 30
 	}
 
@@ -267,6 +267,9 @@ func scanForBoundaries() (nntpDirectSearch.BoundariesScannerResult, error) {
 	if err != nil {
 		return boundaries, err
 	}
+	if boundaries.LastMessage.MessageID < boundaries.FirstMessage.MessageID {
+		return boundaries, fmt.Errorf("invalid message range: first message ID %d is greater than last message ID %d", boundaries.FirstMessage.MessageID, boundaries.LastMessage.MessageID)
+	}
 
 	return boundaries, nil
 }
@@ -275,9 +278,6 @@ func scanForHeader(boundaries nntpDirectSearch.BoundariesScannerResult) ([]*nzbp
 
 	firstMessageID := boundaries.FirstMessage.MessageID
 	lastMessageID := boundaries.LastMessage.MessageID
-	if lastMessageID < firstMessageID {
-		return nil, fmt.Errorf("invalid message range: first message ID %d is greater than last message ID %d", firstMessageID, lastMessageID)
-	}
 	maxIterations := int(lastMessageID - firstMessageID + 1)
 
 	// setup progress bar
