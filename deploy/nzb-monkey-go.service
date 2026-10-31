@@ -6,10 +6,7 @@
 #   systemctl daemon-reload && systemctl enable --now nzb-monkey-go
 #
 # The service MUST run in the same network namespace as SABnzbd so it can
-# reach the SABnzbd API and so that usenet traffic uses the same route.
-# Point JoinsNamespaceOf at whatever unit provides the namespace SABnzbd
-# runs in (the same unit your SABnzbd unit joins). If SABnzbd does not run
-# in a dedicated namespace, remove the three netns lines.
+# reach the SABnzbd API and so that usenet traffic takes the same route.
 
 [Unit]
 Description=nzb-monkey-go NZBLNK web service
@@ -21,11 +18,25 @@ BindsTo=<netns-provider>.service
 
 [Service]
 Type=simple
-# run as the same user as SABnzbd so sabnzbd.ini credentials can be read
-User=sabnzbd
-# join the same network namespace as SABnzbd
-JoinsNamespaceOf=<netns-provider>.service
-ExecStart=/usr/local/bin/nzb-monkey-go --serve --config /etc/nzb-monkey-go/config
+# create the state dir writable by the service user
+ExecStartPre=/usr/bin/install -d -o sabnzbd /var/lib/nzb-monkey-go
+#
+# Join the SABnzbd network namespace. Pick ONE of these mechanisms:
+#
+# a) named netns (iproute2), same mechanism SABnzbd uses - also picks up
+#    /etc/netns/<name>/resolv.conf for in-namespace DNS:
+ExecStart=/sbin/ip netns exec <netns-name> /usr/bin/sudo -u sabnzbd /usr/local/bin/nzb-monkey-go --serve --config /etc/nzb-monkey-go/config
+#
+# b) systemd 256+: NetworkNamespacePath enters the namespace natively and
+#    allows User= directly. NOTE: it does NOT apply the per-netns
+#    resolv.conf from /etc/netns/, so DNS inside the namespace must be
+#    configured separately (e.g. a resolv.conf bind mount).
+# User=sabnzbd
+# NetworkNamespacePath=/run/netns/<netns-name>
+# ExecStart=/usr/local/bin/nzb-monkey-go --serve --config /etc/nzb-monkey-go/config
+#
+# If SABnzbd does not run in a dedicated network namespace, remove the
+# namespace lines above and the BindsTo/After placeholders in [Unit].
 Restart=on-failure
 RestartSec=5
 

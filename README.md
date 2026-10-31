@@ -80,7 +80,7 @@ The enabled usenet server with the lowest priority and the API key/web interface
 
 ### Running next to SABnzbd
 
-The service must run in the **same network namespace** as SABnzbd so it can reach the SABnzbd API and so that usenet traffic takes the same route. If SABnzbd runs in a dedicated namespace, point `JoinsNamespaceOf` at the unit that provides it. `deploy/nzb-monkey-go.service` contains a generic systemd unit with placeholders - run the service as the same user as SABnzbd so it can read `sabnzbd.ini`.
+The service must run in the **same network namespace** as SABnzbd so it can reach the SABnzbd API and so that usenet traffic takes the same route. `deploy/nzb-monkey-go.service` contains a generic systemd unit - if SABnzbd runs in a dedicated namespace it joins it via `ip netns exec` (or `NetworkNamespacePath` on systemd 256+); run the service as the same user as SABnzbd so it can read `sabnzbd.ini`.
 
 With `sabnzbd_pause = true`, every directsearch job pauses the SABnzbd queue first and resumes it afterwards, so the shared usenet connection limit of the account is not exceeded. Non-directsearch jobs do not pause the queue.
 
