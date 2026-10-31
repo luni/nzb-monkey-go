@@ -34,16 +34,7 @@ func checkCategories() string {
 		return ""
 	}
 
-	// find the first configured target that supports category retrieval
-	var catTarget Target
-	catTargetFound := false
-	for _, targetName := range conf.General.Targets {
-		if target, ok := targets[targetName]; ok && target.getCategories != nil {
-			catTarget = target
-			catTargetFound = true
-			break
-		}
-	}
+	catTarget, catTargetFound := firstCategoryTarget()
 
 	if conf.General.Categorize == "manual" && catTargetFound {
 		fmt.Println()
@@ -86,6 +77,16 @@ func checkCategories() string {
 		}
 	}
 	return ""
+}
+
+// firstCategoryTarget returns the first configured target that supports category retrieval
+func firstCategoryTarget() (Target, bool) {
+	for _, targetName := range conf.General.Targets {
+		if target, ok := targets[targetName]; ok && target.getCategories != nil {
+			return target, true
+		}
+	}
+	return Target{}, false
 }
 
 func inputReader() string {
