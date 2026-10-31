@@ -112,40 +112,56 @@ func synologyds_authenticate() (dsOptions, error) {
 			return options, err
 		} else {
 			if jsonResponse.Success {
-				if _, ok := jsonResponse.Data["SYNO.DownloadStation2.Task"]; ok {
-					options.path = jsonResponse.Data["SYNO.DownloadStation2.Task"].(map[string]interface{})["path"].(string)
-					options.minVersion = int(jsonResponse.Data["SYNO.DownloadStation2.Task"].(map[string]interface{})["minVersion"].(float64))
-					options.maxVersion = int(jsonResponse.Data["SYNO.DownloadStation2.Task"].(map[string]interface{})["maxVersion"].(float64))
-					if _, ok := jsonResponse.Data["SYNO.API.Auth"]; ok {
-						// set path
-						path := jsonResponse.Data["SYNO.API.Auth"].(map[string]interface{})["path"].(string)
+				taskInfo, ok := jsonResponse.Data["SYNO.DownloadStation2.Task"].(map[string]interface{})
+				if !ok {
+					return options, fmt.Errorf("unexpected response while querying API info")
+				}
+				taskPath, ok1 := taskInfo["path"].(string)
+				minVersion, ok2 := taskInfo["minVersion"].(float64)
+				maxVersion, ok3 := taskInfo["maxVersion"].(float64)
+				if !ok1 || !ok2 || !ok3 {
+					return options, fmt.Errorf("unexpected response while querying API info")
+				}
+				options.path = taskPath
+				options.minVersion = int(minVersion)
+				options.maxVersion = int(maxVersion)
 
-						// prepare query
-						query := make(url.Values)
+				authInfo, ok := jsonResponse.Data["SYNO.API.Auth"].(map[string]interface{})
+				if !ok {
+					return options, fmt.Errorf("unexpected response while querying API info")
+				}
+				authPath, ok1 := authInfo["path"].(string)
+				authMaxVersion, ok2 := authInfo["maxVersion"].(float64)
+				if !ok1 || !ok2 {
+					return options, fmt.Errorf("unexpected response while querying API info")
+				}
 
-						// add values
-						query.Add("api", "SYNO.API.Auth")
-						query.Add("version", fmt.Sprintf("%d", int(jsonResponse.Data["SYNO.API.Auth"].(map[string]interface{})["maxVersion"].(float64))))
-						query.Add("method", "login")
-						query.Add("account", conf.Synologyds.Username)
-						query.Add("passwd", conf.Synologyds.Password)
-						query.Add("session", "DownloadStation")
-						query.Add("format", "sid")
+				// prepare query
+				query := make(url.Values)
 
-						if response, err := request(conf.Synologyds, "GET", "webapi/"+path, nil, query, nil, ""); err != nil {
-							return options, err
-						} else {
-							var jsonResponse dsResponseStruct
-							if err := json.Unmarshal(response, &jsonResponse); err != nil {
-								return options, err
-							} else {
-								if jsonResponse.Success {
-									if _, ok := jsonResponse.Data["sid"]; ok {
-										options.sid = jsonResponse.Data["sid"].(string)
-										return options, nil
-									}
-								}
+				// add values
+				query.Add("api", "SYNO.API.Auth")
+				query.Add("version", fmt.Sprintf("%d", int(authMaxVersion)))
+				query.Add("method", "login")
+				query.Add("account", conf.Synologyds.Username)
+				query.Add("passwd", conf.Synologyds.Password)
+				query.Add("session", "DownloadStation")
+				query.Add("format", "sid")
+
+				if response, err := request(conf.Synologyds, "GET", "webapi/"+authPath, nil, query, nil, ""); err != nil {
+					return options, err
+				} else {
+					var authResponse dsResponseStruct
+					if err := json.Unmarshal(response, &authResponse); err != nil {
+						return options, err
+					} else {
+						if authResponse.Success {
+							if sid, ok := authResponse.Data["sid"].(string); ok {
+								options.sid = sid
+								return options, nil
 							}
+						} else if authResponse.Error.Code > 0 {
+							return options, synologyds_checkError(int(authResponse.Error.Code))
 						}
 					}
 				}
