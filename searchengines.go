@@ -141,26 +141,30 @@ func jsonSearch(engine SearchEngine, name string) error {
 		Log.Debug("Response body: %s", body)
 		return fmt.Errorf("not a valid JSON response")
 	}
-	for value := range strings.SplitSeq(engine.jsonPath, ".") {
-		if number, err := strconv.Atoi(value); err == nil {
-			if len(result.([]any)) > number && result.([]any)[number] != nil {
-				result = result.([]any)[number]
-			} else {
+	for key := range strings.SplitSeq(engine.jsonPath, ".") {
+		switch node := result.(type) {
+		case map[string]any:
+			next, ok := node[key]
+			if !ok || next == nil {
 				return fmt.Errorf("no results found")
 			}
-		} else {
-			if _, ok := result.(map[string]any)[value]; ok && result.(map[string]any)[value] != nil {
-				result = result.(map[string]any)[value]
-			} else {
+			result = next
+		case []any:
+			number, err := strconv.Atoi(key)
+			if err != nil || number < 0 || number >= len(node) || node[number] == nil {
 				return fmt.Errorf("no results found")
 			}
+			result = node[number]
+		default:
+			return fmt.Errorf("no results found")
 		}
 	}
-	if fmt.Sprintf("%T", result) == "float64" {
-		value = fmt.Sprintf("%d", int(result.(float64)))
-	} else if fmt.Sprintf("%T", result) == "string" {
-		value = result.(string)
-	} else {
+	switch v := result.(type) {
+	case float64:
+		value = fmt.Sprintf("%d", int64(v))
+	case string:
+		value = v
+	default:
 		return fmt.Errorf("no results found")
 	}
 	body, err = loadURL(fmt.Sprintf(engine.downloadURL, value))
