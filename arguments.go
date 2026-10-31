@@ -107,15 +107,17 @@ func checkArguments() {
 				if p := query.Get("p"); p != "" && args.Password == "" {
 					args.Password = strings.TrimSpace(p)
 				}
-				if query.Get("g") != "" && args.Groups == nil {
+				if _, ok := query["g"]; ok && args.Groups == nil {
 					for _, group := range query["g"] {
 						if strings.Contains(group, ",") || strings.Contains(group, ";") || strings.Contains(group, " ") {
 							divider := regexp.MustCompile(` *[,; ] *`)
 							for _, splitGroup := range divider.Split(group, -1) {
-								args.Groups = append(args.Groups, strings.TrimSpace(splitGroup))
+								if splitGroup = strings.TrimSpace(splitGroup); splitGroup != "" {
+									args.Groups = append(args.Groups, splitGroup)
+								}
 							}
-						} else {
-							args.Groups = append(args.Groups, strings.TrimSpace(group))
+						} else if group = strings.TrimSpace(group); group != "" {
+							args.Groups = append(args.Groups, group)
 						}
 					}
 				}

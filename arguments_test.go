@@ -68,9 +68,10 @@ func TestCheckArgumentsTitleFallback(t *testing.T) {
 }
 
 // groups from NZBLNK are split on commas, semicolons and spaces
-// (note: semicolons must be percent-encoded in a valid NZBLNK URI)
+// (note: semicolons must be percent-encoded in a valid NZBLNK URI;
+// empty g values must be skipped, not produce empty groups)
 func TestCheckArgumentsGroupSplitting(t *testing.T) {
-	resetArgs(Args{Nzblnk: "nzblnk://?h=h&g=alt.binaries.a,alt.binaries.b%3Balt.binaries.c"})
+	resetArgs(Args{Nzblnk: "nzblnk://?h=h&g=&g=alt.binaries.a,,alt.binaries.b%3Balt.binaries.c"})
 	checkArguments()
 
 	want := []string{"alt.binaries.a", "alt.binaries.b", "alt.binaries.c"}
