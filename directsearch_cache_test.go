@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"context"
 	"fmt"
+	"math"
 	"net"
 	"os"
 	"path/filepath"
@@ -232,7 +233,7 @@ func TestCompactCacheDir(t *testing.T) {
 	// overlapping file must NOT be merged into the run
 	writeCacheFile(t, dir, 140, 160, []string{"140\ta\tb\tc\td\te\t1\t1"})
 
-	compactCacheDir(dir)
+	compactCacheDir(dir, math.MaxInt64)
 
 	ivs := listCacheIntervals(dir)
 	if len(ivs) != 2 {
@@ -272,12 +273,37 @@ func TestCompactCacheDir(t *testing.T) {
 	}
 }
 
+func TestCompactCacheDirMaxMergedSize(t *testing.T) {
+	dir := t.TempDir()
+	writeCacheFile(t, dir, 100, 150, []string{"100\ta\tb\tc\td\te\t1\t1"})
+	writeCacheFile(t, dir, 151, 200, []string{"151\ta\tb\tc\td\te\t1\t1"})
+	writeCacheFile(t, dir, 201, 250, []string{"201\ta\tb\tc\td\te\t1\t1"})
+	writeCacheFile(t, dir, 251, 300, []string{"251\ta\tb\tc\td\te\t1\t1"})
+
+	// bound the merge so only the first two files fit into one group - the
+	// remaining adjacent files form a second merged file instead of one big
+	// file that eviction would have to drop entirely
+	size := int64(0)
+	if fi, err := os.Stat(filepath.Join(dir, cacheFileName(100, 150))); err == nil {
+		size = fi.Size()
+	}
+	compactCacheDir(dir, size*2)
+
+	ivs := listCacheIntervals(dir)
+	if len(ivs) != 2 {
+		t.Fatalf("expected 2 bounded merged files, got %v", ivs)
+	}
+	if ivs[0].first != 100 || ivs[0].last != 200 || ivs[1].first != 201 || ivs[1].last != 300 {
+		t.Fatalf("unexpected merge boundaries: %v", ivs)
+	}
+}
+
 func TestCompactCacheDirOverlapping(t *testing.T) {
 	dir := t.TempDir()
 	writeCacheFile(t, dir, 100, 150, []string{"100\ta\tb\tc\td\te\t1\t1"})
 	writeCacheFile(t, dir, 140, 200, []string{"140\ta\tb\tc\td\te\t1\t1"})
 
-	compactCacheDir(dir)
+	compactCacheDir(dir, math.MaxInt64)
 
 	// overlapping files are not strictly adjacent -> untouched
 	if got := len(listCacheIntervals(dir)); got != 2 {
@@ -332,6 +358,7 @@ func (s *fakeNNTPServer) handleConn(conn net.Conn) {
 		return
 	}
 	scanner := bufio.NewScanner(conn)
+	groupSelected := false
 	for scanner.Scan() {
 		cmd := strings.TrimSpace(scanner.Text())
 		upper := strings.ToUpper(cmd)
@@ -349,8 +376,14 @@ func (s *fakeNNTPServer) handleConn(conn net.Conn) {
 		case strings.HasPrefix(upper, "CAPABILITIES"):
 			fmt.Fprintf(conn, "101 capabilities\r\n.\r\n")
 		case strings.HasPrefix(upper, "GROUP"):
+			groupSelected = true
 			fmt.Fprintf(conn, "211 1000 1 1000 %s\r\n", strings.TrimSpace(cmd[5:]))
 		case strings.HasPrefix(upper, "OVER ") || strings.HasPrefix(upper, "XOVER "):
+			// a real server requires a selected group before overview queries
+			if !groupSelected {
+				fmt.Fprintf(conn, "412 No Group Selected\r\n")
+				continue
+			}
 			parts := strings.Fields(cmd)
 			if len(parts) < 2 {
 				fmt.Fprintf(conn, "502 error\r\n")
@@ -421,7 +454,7 @@ func TestCachedScanFetchesAndCaches(t *testing.T) {
 	pool := testPool(t, server.port())
 	cacheDir := filepath.Join(t.TempDir(), "alt.binaries.test")
 
-	scan := newCachedScan(context.Background(), pool, "alt.binaries.test", cacheDir, "cache-needle", 100, 4, 0, 5, nil)
+	scan := newCachedScan(context.Background(), pool, "alt.binaries.test", cacheDir, "cache-needle", 100, 4, 0, 5, math.MaxInt64, nil)
 	nzbFiles, err := scan.run(100, 300)
 	if err != nil {
 		t.Fatalf("scan failed: %v", err)
@@ -465,7 +498,7 @@ func TestCachedScanServesFromCache(t *testing.T) {
 	cacheDir := filepath.Join(t.TempDir(), "alt.binaries.test")
 
 	// first run fills the cache
-	scan := newCachedScan(context.Background(), pool, "alt.binaries.test", cacheDir, "first-needle", 100, 4, 0, 5, nil)
+	scan := newCachedScan(context.Background(), pool, "alt.binaries.test", cacheDir, "first-needle", 100, 4, 0, 5, math.MaxInt64, nil)
 	if _, err := scan.run(100, 200); err != nil {
 		t.Fatalf("first scan failed: %v", err)
 	}
@@ -473,7 +506,7 @@ func TestCachedScanServesFromCache(t *testing.T) {
 
 	// second run over the same range with a DIFFERENT needle - must be served
 	// entirely from the cache without any new OVER request
-	scan2 := newCachedScan(context.Background(), pool, "alt.binaries.test", cacheDir, "second-needle", 100, 4, 0, 5, nil)
+	scan2 := newCachedScan(context.Background(), pool, "alt.binaries.test", cacheDir, "second-needle", 100, 4, 0, 5, math.MaxInt64, nil)
 	nzbFiles, err := scan2.run(100, 200)
 	if err != nil {
 		t.Fatalf("cached scan failed: %v", err)
@@ -512,7 +545,7 @@ func TestCachedScanPartialCoverage(t *testing.T) {
 	}
 	writeCacheFile(t, cacheDir, 100, 150, seed)
 
-	scan := newCachedScan(context.Background(), pool, "alt.binaries.test", cacheDir, "nothing-matches", 100, 4, 0, 5, nil)
+	scan := newCachedScan(context.Background(), pool, "alt.binaries.test", cacheDir, "nothing-matches", 100, 4, 0, 5, math.MaxInt64, nil)
 	if _, err := scan.run(100, 250); err != nil {
 		t.Fatalf("scan failed: %v", err)
 	}
@@ -557,7 +590,7 @@ func TestCachedScanNoDuplicateSegmentsOnOverlap(t *testing.T) {
 	writeCacheFile(t, cacheDir, 100, 150, mkLines(100, 150))
 	writeCacheFile(t, cacheDir, 120, 160, mkLines(120, 160))
 
-	scan := newCachedScan(context.Background(), pool, "alt.binaries.test", cacheDir, "dup-needle", 100, 4, 0, 5, nil)
+	scan := newCachedScan(context.Background(), pool, "alt.binaries.test", cacheDir, "dup-needle", 100, 4, 0, 5, math.MaxInt64, nil)
 	nzbFiles, err := scan.run(100, 160)
 	if err != nil {
 		t.Fatalf("scan failed: %v", err)
