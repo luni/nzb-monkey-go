@@ -48,12 +48,12 @@ func init() {
 	var err error
 	// set path variables
 	if appExec, err = os.Executable(); err != nil {
-		Log.Error("Unable to determin application path")
+		Log.Error("Unable to determine application path")
 		exit(1)
 	}
 	appPath = filepath.Dir(appExec)
 	if homePath, err = os.UserHomeDir(); err != nil {
-		Log.Error("Unable to determin home path")
+		Log.Error("Unable to determine home path")
 		exit(1)
 	}
 	tempPath = os.TempDir()
@@ -158,14 +158,23 @@ func prettyByteSize(b int) string {
 }
 
 func processResult(nzb *nzbparser.Nzb, name string) {
+	if nzb == nil || nzb.Files.Len() == 0 {
+		Log.Warn("The NZB file is empty and will be skipped")
+		return
+	}
+	segmentsMissing := nzb.TotalSegments - nzb.Segments
+	var segmentsMissingPercent float64
+	if nzb.TotalSegments > 0 {
+		segmentsMissingPercent = float64(segmentsMissing) / float64(nzb.TotalSegments) * 100
+	}
 	result := Result{
 		SearchEngine:           name,
 		Nzb:                    nzb,
 		FilesMissing:           nzb.TotalFiles - nzb.Files.Len(),
 		FilesComplete:          nzb.TotalFiles-nzb.Files.Len() <= conf.Nzbcheck.MaxMissingFiles,
-		SegmentsMissing:        nzb.TotalSegments - nzb.Segments,
-		SegmentsMissingPercent: float64(float64(nzb.TotalSegments-nzb.Segments) / float64(nzb.TotalSegments) * 100),
-		SegmentsComplete:       float64(float64(nzb.TotalSegments-nzb.Segments)/float64(nzb.TotalSegments)*100) <= conf.Nzbcheck.MaxMissingSegmentsPercent,
+		SegmentsMissing:        segmentsMissing,
+		SegmentsMissingPercent: segmentsMissingPercent,
+		SegmentsComplete:       segmentsMissingPercent <= conf.Nzbcheck.MaxMissingSegmentsPercent,
 	}
 	if result.FilesComplete {
 		filesColor = green
