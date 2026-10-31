@@ -140,3 +140,10 @@ func TestLoadConfigHelperProcess(t *testing.T) {
 	loadConfig()
 	os.Exit(0) // loadConfig must not return on failure paths
 }
+
+// an existing regular config file must not trigger creation or
+// registration - checkForConfig returns without side effects
+func TestCheckForConfigExists(t *testing.T) {
+	confPath = writeConfig(t, validConfig)
+	checkForConfig() // must not exit or prompt
+}

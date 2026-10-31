@@ -2,8 +2,11 @@ package main
 
 import (
 	"encoding/base64"
+	"fmt"
 	"mime"
 	"mime/multipart"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -94,4 +97,67 @@ func keysOf(v map[string][]string) []string {
 		keys = append(keys, k)
 	}
 	return keys
+}
+
+// end-to-end: easynewsSearch must authenticate, search, download and
+// process the NZB
+func TestEasynewsSearch(t *testing.T) {
+	args = struct{ Args }{Args: Args{Header: "test header", Title: "test title"}}
+	results = nil
+	// all thresholds allow an incomplete NZB, so it gets appended rather than
+	// processed (processFoundNzb would terminate via os.Exit)
+	conf.Nzbcheck = NZBcheck{BestNZB: true, MaxMissingFiles: 99, MaxMissingSegmentsPercent: 100}
+	conf.General.Targets = nil
+	conf.Easynews = Easynews{Username: "u", Password: "p"}
+
+	wantAuth := "Basic " + base64.StdEncoding.EncodeToString([]byte("u:p"))
+	gotPost := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != wantAuth {
+			t.Errorf("Authorization = %q, want %q", got, wantAuth)
+		}
+		switch r.Method {
+		case http.MethodGet:
+			if !strings.Contains(r.URL.RawQuery, "gps=test+header") {
+				t.Errorf("search query missing search string: %s", r.URL.RawQuery)
+			}
+			fmt.Fprint(w, `{"data":[
+				{"0":"id-1","10":"a.rar","11":"rar","19":"setA","sig":"s1"},
+				{"0":"id-2","10":"b.rar","11":"rar","19":"setA","sig":"s2"}
+			]}`)
+		case http.MethodPost:
+			gotPost = true
+			if err := r.ParseMultipartForm(1 << 20); err != nil {
+				t.Errorf("ParseMultipartForm: %v", err)
+			}
+			if r.MultipartForm.Value["autoNZB"][0] != "1" {
+				t.Errorf("autoNZB = %v, want 1", r.MultipartForm.Value["autoNZB"])
+			}
+			fmt.Fprint(w, `<?xml version="1.0" encoding="UTF-8"?>
+<nzb xmlns="http://www.newzbin.com/DTD/nzb/nzb-1.1.dtd">
+<file poster="t" date="1" subject="f [1/2] (1/2)">
+<groups><group>alt.binaries.test</group></groups>
+<segments><segment bytes="1" number="1">s@n</segment></segments>
+</file>
+</nzb>`)
+		}
+	}))
+	defer srv.Close()
+
+	engine := SearchEngine{
+		name:        "Easynews",
+		searchURL:   srv.URL + "/search?x=1",
+		downloadURL: srv.URL + "/dl",
+		search:      easynewsSearch,
+	}
+
+	if err := engine.search(engine, engine.name); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !gotPost {
+		t.Error("download URL was never requested")
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result appended, got %d", len(results))
+	}
 }

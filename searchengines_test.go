@@ -79,6 +79,7 @@ func TestJsonSearchSuccess(t *testing.T) {
 	// all thresholds allow an incomplete NZB, so it gets appended rather than
 	// processed (processFoundNzb would terminate via os.Exit)
 	conf.Nzbcheck = NZBcheck{BestNZB: true, MaxMissingFiles: 99, MaxMissingSegmentsPercent: 100}
+	conf.General.Targets = nil
 
 	downloaded := false
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -122,6 +123,7 @@ func TestHtmlSearchSuccess(t *testing.T) {
 	args = struct{ Args }{Args: Args{Header: "test", Title: "test"}}
 	results = nil
 	conf.Nzbcheck = NZBcheck{BestNZB: true, MaxMissingFiles: 99, MaxMissingSegmentsPercent: 100}
+	conf.General.Targets = nil
 
 	var gotPath string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
