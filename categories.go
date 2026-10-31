@@ -89,9 +89,12 @@ func firstCategoryTarget() (Target, bool) {
 	return Target{}, false
 }
 
+// shared stdin reader - a new bufio.Reader per call would discard
+// input already buffered by the previous reader
+var stdinReader = bufio.NewReader(os.Stdin)
+
 func inputReader() string {
-	reader := bufio.NewReader(os.Stdin)
-	input, err := reader.ReadString('\n')
+	input, err := stdinReader.ReadString('\n')
 	if err != nil {
 		if errors.Is(err, io.EOF) { // prefered way by GoLang doc
 			os.Exit(0)
