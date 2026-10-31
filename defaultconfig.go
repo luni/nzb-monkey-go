@@ -175,5 +175,9 @@ show_counter = true
 # Only allow one instance of the direct search to run at the same time
 # (prevents too many connection errors if more than one search is started at the same time)
 one_instance_only = true
+# Step size of the boundaries scanner for finding the first and last message (default = 500)
+boundaries_scanner_step = 500
+# Tolerance in seconds for the boundaries scanner to consider a date close enough to the target (default = 30)
+boundaries_scanner_tolerance = 30
 `, "\n")
 }

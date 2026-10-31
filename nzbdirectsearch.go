@@ -16,12 +16,8 @@ import (
 )
 
 var directSearch *nntpDirectSearch.DirectSearch
-var err error
 var startDate int64
 var endDate int64
-var searchInGroupError error
-var totalPeakMessagesPerSecond uint64
-var totalPeakBytesPerSecond uint64
 
 var FormatNumberWithApostrophe = func(n uint) string {
 	return nntpDirectSearch.FormatNumberWithApostrophe(n)
@@ -49,6 +45,9 @@ func nzbdirectsearch(engine SearchEngine, name string) error {
 	}
 	if conf.Directsearch.Hours == 0 {
 		conf.Directsearch.Hours = 12
+	}
+	if conf.Directsearch.ForwardHours == 0 {
+		conf.Directsearch.ForwardHours = 12
 	}
 	if conf.Directsearch.Step == 0 {
 		conf.Directsearch.Step = 20000
@@ -92,6 +91,7 @@ func nzbdirectsearch(engine SearchEngine, name string) error {
 	// initialize direct search
 	directSearchCtx, directSearchCtxCancel := context.WithCancel(context.Background())
 	defer directSearchCtxCancel()
+	var err error
 	directSearch, err = nntpDirectSearch.New(pool, directSearchCtx)
 	if err != nil {
 		return err
@@ -104,7 +104,7 @@ func nzbdirectsearch(engine SearchEngine, name string) error {
 		BoundariesScannerStep:      uint(conf.Directsearch.BoundariesScannerStep),
 		BoundariesScannerTolerance: uint(conf.Directsearch.BoundariesScannerTolerance),
 	}
-	err := directSearch.SetConfig(directSearchConfig)
+	err = directSearch.SetConfig(directSearchConfig)
 	if err != nil {
 		return fmt.Errorf("failed to set direct search config: %v", err)
 	}
@@ -125,15 +125,16 @@ func nzbdirectsearch(engine SearchEngine, name string) error {
 	}()
 
 	// iterate over groups
+	var searchInGroupError error
 	for i, group := range args.Groups {
 		if i > 0 && conf.Directsearch.FirstGroupOnly && searchInGroupError == nil {
 			Log.Info("Skipping other groups based on config settings.")
 			return nil
 		}
 		Log.Info("Searching in group '%s' ...", group)
-		searchInGroupError = nil
 
-		nzbFiles, searchInGroupError := searchInGroup(group)
+		var nzbFiles []*nzbparser.Nzb
+		nzbFiles, searchInGroupError = searchInGroup(group)
 		if searchInGroupError != nil {
 			Log.Error(searchInGroupError.Error())
 			continue
@@ -158,8 +159,7 @@ func nzbdirectsearch(engine SearchEngine, name string) error {
 func searchInGroup(group string) ([]*nzbparser.Nzb, error) {
 
 	// switch to group
-	err = directSearch.SwitchToGroup(group)
-	if err != nil {
+	if err := directSearch.SwitchToGroup(group); err != nil {
 		return nil, fmt.Errorf("failed to switch to group '%s': %v", group, err)
 	}
 
@@ -207,11 +207,14 @@ func searchInGroup(group string) ([]*nzbparser.Nzb, error) {
 	// get lines read
 	linesRead := directSearch.GetLinesRead()
 	formattedLinesRead := FormatNumberWithApostrophe(uint(linesRead))
-	// calculate average messages per second
-	averageMessagesPerSecond := uint64((float64(linesRead) / float64(duration.Milliseconds()) * 1000))
+	// calculate average rates (guard against zero duration)
+	var averageMessagesPerSecond uint64
+	var averageBytesPerSecond uint64
+	if duration.Milliseconds() > 0 {
+		averageMessagesPerSecond = uint64((float64(linesRead) / float64(duration.Milliseconds()) * 1000))
+		averageBytesPerSecond = uint64((float64(directSearch.GetBytesRead()) / float64(duration.Milliseconds())) * 1000)
+	}
 	formattedAverageMessagesPerSecond := FormatNumberWithApostrophe(uint(averageMessagesPerSecond))
-	// calculate average Mbit/s
-	averageBytesPerSecond := uint64((float64(directSearch.GetBytesRead()) / float64(duration.Milliseconds())) * 1000)
 	averageMbitPerSecond := float64(averageBytesPerSecond) * 8 / 1000000
 	// calculate peake messages per second
 	var formatedPeakMessagesPerSecond string
@@ -252,8 +255,7 @@ func scanForBoundaries() (nntpDirectSearch.BoundariesScannerResult, error) {
 	}
 
 	// scan for boundaries
-	var boundaries nntpDirectSearch.BoundariesScannerResult
-	boundaries, err = directSearch.BoundariesScanner(time.Unix(startDate, 0), time.Unix(endDate, 0), iterationFunc)
+	boundaries, err := directSearch.BoundariesScanner(time.Unix(startDate, 0), time.Unix(endDate, 0), iterationFunc)
 	bar.Finish()
 	fmt.Println()
 	if err != nil {
@@ -286,8 +288,7 @@ func scanForHeader(boundaries nntpDirectSearch.BoundariesScannerResult) ([]*nzbp
 	}
 
 	// scan for header
-	var nzbFiles []*nzbparser.Nzb
-	nzbFiles, err = directSearch.MessageScanner(args.Header, firstMessageID, lastMessageID, iterationFunc)
+	nzbFiles, err := directSearch.MessageScanner(args.Header, firstMessageID, lastMessageID, iterationFunc)
 	bar.ChangeMax64(int64(directSearch.GetLinesRead()))
 	bar.Finish()
 	fmt.Println()
@@ -312,15 +313,9 @@ func measurePeakRates(ctx context.Context, ticker *time.Ticker, peakMessagesPerS
 			bytesThisSecond := currentBytes - lastBytes
 			if messagesThisSecond > *peakMessagesPerSecond {
 				*peakMessagesPerSecond = messagesThisSecond
-				if totalPeakMessagesPerSecond < *peakMessagesPerSecond {
-					totalPeakMessagesPerSecond = *peakMessagesPerSecond
-				}
 			}
 			if bytesThisSecond > *peakBytesPerSecond {
 				*peakBytesPerSecond = bytesThisSecond
-				if totalPeakBytesPerSecond < *peakBytesPerSecond {
-					totalPeakBytesPerSecond = *peakBytesPerSecond
-				}
 			}
 			lastMessages = currentMessages
 			lastBytes = currentBytes
