@@ -1,6 +1,9 @@
 package main
 
 import (
+	"fmt"
+	"maps"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -126,7 +129,8 @@ type Configuration struct {
 
 // global configuration variable
 var (
-	conf Configuration
+	conf           Configuration
+	newznabEngines SearchEngines
 )
 
 func loadConfig() {
@@ -178,6 +182,34 @@ func loadConfig() {
 	// load searchengines
 	searchengines := make(map[string]int)
 	if cfg.HasSection("SEARCHENGINES") {
+		// register newznab engines from the NEWZNAB section first so they
+		// resolve like builtin engines below; also drop engines registered
+		// by a previous loadConfig run
+		for name := range newznabEngines {
+			delete(searchEngines, name)
+		}
+		newznabEngines = make(SearchEngines)
+		if cfg.HasSection("NEWZNAB") {
+			for _, key := range cfg.Section("NEWZNAB").Keys() {
+				host, apikey, ok := strings.Cut(key.Value(), ",")
+				host = strings.TrimSpace(host)
+				apikey = strings.TrimSpace(apikey)
+				if !ok || host == "" || apikey == "" {
+					Log.Warn("Invalid newznab definition for '%s' - expected 'host,apikey'", key.Name())
+					continue
+				}
+				if !strings.Contains(host, "://") {
+					host = "https://" + host
+				}
+				newznabEngines[key.Name()] = SearchEngine{
+					name:      "Newznab (" + key.Name() + ")",
+					search:    newznabSearch,
+					apikey:    apikey,
+					searchURL: fmt.Sprintf("%s/api?t=search&q=%%s&apikey=%s", strings.TrimRight(host, "/"), url.QueryEscape(apikey)),
+				}
+			}
+			maps.Copy(searchEngines, newznabEngines)
+		}
 		for _, key := range cfg.Section("SEARCHENGINES").Keys() {
 			if _, ok := searchEngines[key.Name()]; ok {
 				value, err := strconv.Atoi(key.Value())

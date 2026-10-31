@@ -132,6 +132,17 @@ binsearch = 3
 easynews = 4
 # Enable nzb direct search (settings for the nzb direct search required)
 directsearch = 5
+# Additional indexers supporting the Newznab API can be enabled here by
+# using the name defined in the NEWZNAB section below, e.g.:
+# drunkenslug = 6
+
+# Settings for Newznab compatible indexers (host,apikey - one per line)
+# Most modern indexers provide a Newznab API (e.g. DrunkenSlug, NZBGeek,
+# NZBPlanet, abNZB, altHUB, Usenet Crawler); register an account there and
+# copy the API key from your profile
+# [NEWZNAB]
+# drunkenslug = "https://api.drunkenslug.com,YOUR_API_KEY"
+# nzbgeek = "https://api.nzbgeek.info,YOUR_API_KEY"
 
 # Settings for the Easynews search
 [EASYNEWS]

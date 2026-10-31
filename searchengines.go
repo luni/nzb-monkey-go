@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"encoding/xml"
 	"fmt"
 	"net/url"
 	"regexp"
@@ -21,6 +22,7 @@ type SearchEngine struct {
 	groupNo     int
 	search      func(engine SearchEngine, name string) error
 	stringRegx  []RegexPattern
+	apikey      string
 }
 
 type RegexPattern struct {
@@ -112,6 +114,58 @@ func htmlSearch(engine SearchEngine, name string) error {
 	body, err = loadURL(fmt.Sprintf(engine.downloadURL, match[engine.groupNo]))
 	if err != nil {
 		return fmt.Errorf("error calling download URL: %s", err.Error())
+	}
+	nzb, err := nzbparser.ParseString(body)
+	if err != nil {
+		return fmt.Errorf("error parsing NZB file: %s", err.Error())
+	}
+	if nzb.Files.Len() == 0 {
+		return fmt.Errorf("the returned NZB file is empty")
+	}
+	processResult(nzb, name)
+	return nil
+}
+
+// search function for indexers implementing the standard Newznab API:
+// GET {host}/api?t=search&q={query}&apikey={key} returns an RSS feed whose
+// first <item><link> is the NZB download URL; failures return a bare
+// <error code=".." description=".."/> element
+func newznabSearch(engine SearchEngine, name string) error {
+	searchString := engine.cleanSearchString(args.Header)
+	body, err := loadURL(fmt.Sprintf(engine.searchURL, url.QueryEscape(searchString)))
+	if err != nil {
+		// the URL contains the apikey - redact it from error messages
+		return fmt.Errorf("error calling search URL: %s", strings.ReplaceAll(err.Error(), engine.apikey, "***"))
+	}
+
+	// check for a newznab error response first
+	var apiError struct {
+		XMLName     xml.Name `xml:"error"`
+		Code        string   `xml:"code,attr"`
+		Description string   `xml:"description,attr"`
+	}
+	if err := xml.Unmarshal([]byte(body), &apiError); err == nil && apiError.XMLName.Local == "error" {
+		return fmt.Errorf("API error %s: %s", apiError.Code, apiError.Description)
+	}
+
+	var rss struct {
+		XMLName xml.Name `xml:"rss"`
+		Items   []struct {
+			Link string `xml:"link"`
+		} `xml:"channel>item"`
+	}
+	if err := xml.Unmarshal([]byte(body), &rss); err != nil {
+		Log.Debug("XML parse error: %s", err.Error())
+		Log.Debug("Response body: %s", body)
+		return fmt.Errorf("not a valid Newznab RSS response")
+	}
+	if len(rss.Items) == 0 || rss.Items[0].Link == "" {
+		return fmt.Errorf("no results found")
+	}
+	body, err = loadURL(rss.Items[0].Link)
+	if err != nil {
+		// the URL may contain the apikey - redact it from error messages
+		return fmt.Errorf("error calling download URL: %s", strings.ReplaceAll(err.Error(), engine.apikey, "***"))
 	}
 	nzb, err := nzbparser.ParseString(body)
 	if err != nil {
