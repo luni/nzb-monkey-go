@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>nzb-monkey-go</title>
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  body { font-family: system-ui, sans-serif; margin: 0 auto; max-width: 64rem; padding: 1rem; }
+  h1 { font-size: 1.4rem; }
+  .card { border: 1px solid #8884; border-radius: 8px; padding: 1rem; margin-bottom: 1rem; }
+  input[type=text], input[type=password] { width: 100%; padding: .5rem; margin: .25rem 0 .75rem; border: 1px solid #8886; border-radius: 4px; background: transparent; color: inherit; font: inherit; }
+  button { padding: .5rem 1rem; border: 1px solid #8886; border-radius: 4px; background: #8881; color: inherit; cursor: pointer; font: inherit; }
+  button:hover { background: #8883; }
+  table { width: 100%; border-collapse: collapse; font-size: .9rem; }
+  th, td { text-align: left; padding: .4rem .5rem; border-bottom: 1px solid #8883; vertical-align: top; }
+  th { font-weight: 600; }
+  .badge { display: inline-block; padding: .1rem .55rem; border-radius: 1rem; font-size: .8rem; font-weight: 600; }
+  .badge.queued   { background: #8884; }
+  .badge.running  { background: #3b82f6; color: #fff; }
+  .badge.done     { background: #16a34a; color: #fff; }
+  .badge.failed   { background: #dc2626; color: #fff; }
+  .badge.canceled { background: #a16207; color: #fff; }
+  .muted { opacity: .6; font-size: .85rem; }
+  .err { color: #dc2626; }
+  pre.log { background: #0002; border-radius: 6px; padding: .75rem; max-height: 24rem; overflow: auto; font-size: .78rem; white-space: pre-wrap; word-break: break-all; }
+  .nzblnk { max-width: 22rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  a { color: inherit; }
+  .row { display: flex; gap: .5rem; align-items: center; }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+<h1>nzb-monkey-go</h1>
+
+<div id="loginCard" class="card hidden">
+  <div id="loginUserFields">
+    <label>Username <input type="text" id="loginUser" autocomplete="username"></label>
+    <label>Password <input type="password" id="loginPass" autocomplete="current-password"></label>
+  </div>
+  <div id="loginTokenField" class="hidden">
+    <label>Access token <input type="password" id="loginToken"></label>
+  </div>
+  <button id="loginBtn">Log in</button>
+  <span id="loginMsg" class="err"></span>
+</div>
+
+<div id="main" class="hidden">
+  <div class="card">
+    <label for="nzblnk">NZBLNK</label>
+    <input type="text" id="nzblnk" placeholder="nzblnk://?t=...&h=...&p=...&g=...&d=...">
+    <button id="submitBtn">Submit</button>
+    <span id="submitMsg"></span>
+  </div>
+
+  <div class="card">
+    <table>
+      <thead><tr><th>#</th><th>Status</th><th>NZBLNK</th><th>Created</th><th>Finished</th><th></th></tr></thead>
+      <tbody id="jobs"></tbody>
+    </table>
+    <div id="empty" class="muted">No jobs yet.</div>
+  </div>
+
+  <div id="logCard" class="card hidden">
+    <div class="row"><strong>Log - job <span id="logJobId"></span></strong><button id="logClose">close</button></div>
+    <pre class="log" id="logView"></pre>
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+let token = localStorage.getItem('nmg_token') || '';
+let pollTimer = null;
+let openLogId = null;
+
+function headers() {
+  return token ? { 'Authorization': 'Bearer ' + token } : {};
+}
+
+async function api(path, opts = {}) {
+  opts.headers = Object.assign({}, headers(), opts.headers || {});
+  const r = await fetch('/api' + path, opts);
+  if (r.status === 401) { showLogin(); throw new Error('unauthorized'); }
+  return r;
+}
+
+function showLogin() {
+  $('main').classList.add('hidden');
+  $('loginCard').classList.remove('hidden');
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+}
+
+function showMain() {
+  $('loginCard').classList.add('hidden');
+  $('main').classList.remove('hidden');
+  if (!pollTimer) { poll(); pollTimer = setInterval(poll, 2000); }
+}
+
+async function init() {
+  try {
+    const authz = await (await fetch('/api/authz')).json();
+    $('loginUserFields').classList.toggle('hidden', !authz.sab_login);
+    $('loginTokenField').classList.toggle('hidden', authz.sab_login);
+    if (!authz.required) { showMain(); return; }
+    if (token) {
+      try { await api('/jobs'); showMain(); return; }
+      catch (e) { /* fall through to login */ }
+    }
+    showLogin();
+  } catch (e) {
+    $('submitMsg').textContent = 'service unreachable';
+  }
+}
+
+$('loginBtn').onclick = async () => {
+  const body = $('loginTokenField').classList.contains('hidden')
+    ? { username: $('loginUser').value, password: $('loginPass').value }
+    : { password: $('loginToken').value };
+  try {
+    const r = await fetch('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const d = await r.json();
+    if (!r.ok) { $('loginMsg').textContent = d.error || 'login failed'; return; }
+    token = d.token;
+    localStorage.setItem('nmg_token', token);
+    $('loginMsg').textContent = '';
+    showMain();
+  } catch (e) { $('loginMsg').textContent = 'login failed'; }
+};
+
+$('submitBtn').onclick = async () => {
+  const nzblnk = $('nzblnk').value.trim();
+  if (!nzblnk) { $('submitMsg').textContent = 'enter a NZBLNK'; return; }
+  try {
+    const r = await api('/jobs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ nzblnk }) });
+    const d = await r.json();
+    if (!r.ok) { $('submitMsg').textContent = d.error || 'submit failed'; return; }
+    $('submitMsg').textContent = 'queued as job ' + d.id;
+    $('nzblnk').value = '';
+    poll();
+  } catch (e) { /* auth already handled */ }
+};
+
+async function poll() {
+  try {
+    const r = await api('/jobs');
+    const jobs = await r.json();
+    render(jobs);
+  } catch (e) { /* 401 handled by api() */ }
+}
+
+function esc(s) {
+  const d = document.createElement('div');
+  d.textContent = s == null ? '' : String(s);
+  return d.innerHTML;
+}
+
+function fmtTime(t) {
+  if (!t || t.startsWith('0001-')) return '';
+  return new Date(t).toLocaleString();
+}
+
+function render(jobs) {
+  $('empty').style.display = jobs && jobs.length ? 'none' : '';
+  const rows = (jobs || []).map(j => `
+    <tr>
+      <td>${j.id}</td>
+      <td><span class="badge ${esc(j.status)}">${esc(j.status)}</span></td>
+      <td class="nzblnk" title="${esc(j.nzblnk)}">${esc(j.nzblnk)}${j.error ? `<div class="err">${esc(j.error)}</div>` : ''}</td>
+      <td class="muted">${fmtTime(j.created)}</td>
+      <td class="muted">${fmtTime(j.finished)}</td>
+      <td class="row">
+        <button data-log="${j.id}">log</button>
+        ${(j.status === 'queued' || j.status === 'running') ? `<button data-cancel="${j.id}">cancel</button>` : ''}
+      </td>
+    </tr>`).join('');
+  $('jobs').innerHTML = rows;
+  document.querySelectorAll('[data-log]').forEach(b => b.onclick = () => toggleLog(+b.dataset.log));
+  document.querySelectorAll('[data-cancel]').forEach(b => b.onclick = () => cancelJob(+b.dataset.cancel));
+  if (openLogId) refreshLog();
+}
+
+async function toggleLog(id) {
+  if (openLogId === id) { openLogId = null; $('logCard').classList.add('hidden'); return; }
+  openLogId = id;
+  $('logCard').classList.remove('hidden');
+  refreshLog();
+}
+
+async function refreshLog() {
+  try {
+    const r = await api('/jobs/' + openLogId + '/log');
+    $('logJobId').textContent = openLogId;
+    $('logView').textContent = await r.text();
+    $('logView').scrollTop = $('logView').scrollHeight;
+  } catch (e) { /* ignore */ }
+}
+
+$('logClose').onclick = () => { openLogId = null; $('logCard').classList.add('hidden'); };
+
+async function cancelJob(id) {
+  try { await api('/jobs/' + id, { method: 'DELETE' }); poll(); } catch (e) { /* ignore */ }
+}
+
+init();
+</script>
+</body>
+</html>

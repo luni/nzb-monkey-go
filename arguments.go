@@ -28,6 +28,7 @@ type Args struct {
 	Config      string   `arg:"--config" help:"path to the config file"`
 	Debug       bool     `arg:"--debug" help:"logs output to log file"`
 	Register    bool     `arg:"--register" help:"register the NZBLNK protocol"`
+	Serve       bool     `arg:"--serve" help:"run as web service accepting NZBLNK URIs via a web page and API"`
 }
 
 // version information
@@ -90,41 +91,27 @@ func checkArguments() {
 	// parse nzblink if provided
 	isNzblnk := false
 	if args.Nzblnk != "" {
-		if nzblnk, err := url.Parse(args.Nzblnk); err == nil {
-			if query, err := url.ParseQuery(nzblnk.RawQuery); err == nil {
-				if h := query.Get("h"); h != "" {
-					if args.Header == "" {
-						args.Header = strings.TrimSpace(h)
-					}
-				} else {
-					writeUsage(argParser)
-					Log.Error("Invalid NZBLNK URI: missing 'h' parameter")
-					exit(1)
-				}
-				if t := query.Get("t"); t != "" && args.Title == "" {
-					args.Title = strings.TrimSpace(t)
-				}
-				if p := query.Get("p"); p != "" && args.Password == "" {
-					args.Password = strings.TrimSpace(p)
-				}
-				if _, ok := query["g"]; ok && args.Groups == nil {
-					for _, group := range query["g"] {
-						if strings.Contains(group, ",") || strings.Contains(group, ";") || strings.Contains(group, " ") {
-							divider := regexp.MustCompile(` *[,; ] *`)
-							for _, splitGroup := range divider.Split(group, -1) {
-								if splitGroup = strings.TrimSpace(splitGroup); splitGroup != "" {
-									args.Groups = append(args.Groups, splitGroup)
-								}
-							}
-						} else if group = strings.TrimSpace(group); group != "" {
-							args.Groups = append(args.Groups, group)
-						}
-					}
-				}
-				if d := query.Get("d"); d != "" && args.Date == "" {
-					isNzblnk = true
-					args.Date = strings.TrimSpace(d)
-				}
+		if link, err := parseNzblnk(args.Nzblnk); err == nil {
+			if link.header == "" {
+				writeUsage(argParser)
+				Log.Error("Invalid NZBLNK URI: missing 'h' parameter")
+				exit(1)
+			}
+			if args.Header == "" {
+				args.Header = link.header
+			}
+			if link.title != "" && args.Title == "" {
+				args.Title = link.title
+			}
+			if link.password != "" && args.Password == "" {
+				args.Password = link.password
+			}
+			if args.Groups == nil {
+				args.Groups = link.groups
+			}
+			if link.date != "" && args.Date == "" {
+				isNzblnk = true
+				args.Date = link.date
 			}
 		}
 	}
@@ -180,6 +167,48 @@ func checkArguments() {
 	// unescape title
 	args.Title = html.UnescapeString(args.Title)
 
+}
+
+// parsedNzblnk holds the extracted values of a NZBLNK URI.
+type parsedNzblnk struct {
+	header   string
+	title    string
+	password string
+	groups   []string
+	date     string
+}
+
+// parseNzblnk extracts the query parameters of a NZBLNK URI. It returns an
+// error when the URI cannot be parsed at all; a missing 'h' parameter is not
+// treated as an error here so callers can decide how strict to be.
+func parseNzblnk(raw string) (*parsedNzblnk, error) {
+	nzblnk, err := url.Parse(raw)
+	if err != nil {
+		return nil, err
+	}
+	query, err := url.ParseQuery(nzblnk.RawQuery)
+	if err != nil {
+		return nil, err
+	}
+	link := &parsedNzblnk{
+		header:   strings.TrimSpace(query.Get("h")),
+		title:    strings.TrimSpace(query.Get("t")),
+		password: strings.TrimSpace(query.Get("p")),
+		date:     strings.TrimSpace(query.Get("d")),
+	}
+	for _, group := range query["g"] {
+		if strings.Contains(group, ",") || strings.Contains(group, ";") || strings.Contains(group, " ") {
+			divider := regexp.MustCompile(` *[,; ] *`)
+			for _, splitGroup := range divider.Split(group, -1) {
+				if splitGroup = strings.TrimSpace(splitGroup); splitGroup != "" {
+					link.groups = append(link.groups, splitGroup)
+				}
+			}
+		} else if group = strings.TrimSpace(group); group != "" {
+			link.groups = append(link.groups, group)
+		}
+	}
+	return link, nil
 }
 
 func writeUsage(parser *parser.Parser) {

@@ -87,6 +87,11 @@ func main() {
 	parseArguments()
 	setConfPath()
 	checkForConfig()
+	if args.Serve {
+		loadConfig()
+		serve()
+		return
+	}
 	checkArguments()
 	loadConfig()
 
