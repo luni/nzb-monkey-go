@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"strings"
+	"sync"
 
 	"github.com/acarl005/stripansi"
 	"github.com/fatih/color"
@@ -20,9 +21,10 @@ type Logger struct {
 
 // global error logger variables
 var (
-	logFile *os.File
-	logger  *log.Logger
-	Log     = Logger{
+	logFile     *os.File
+	logger      *log.Logger
+	logInitOnce sync.Once
+	Log         = Logger{
 		Error: logError,
 		Warn:  logWarn,
 		Info:  logInfo,
@@ -54,9 +56,11 @@ func logDebug(logText string, vars ...interface{}) {
 
 func logEntry(logType string, logText string, vars ...interface{}) {
 
-	// init logger if nil
-	if args.Debug && logFile == nil {
-		initLogger(logFilePath)
+	// init logger once if debug is enabled
+	if args.Debug {
+		logInitOnce.Do(func() {
+			initLogger(logFilePath)
+		})
 	}
 
 	// log error
