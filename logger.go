@@ -110,7 +110,7 @@ func logEntry(logType string, logText string, vars ...interface{}) {
 
 func initLogger(file string) {
 	var err error
-	if logFile, err = os.OpenFile(file, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0666); err == nil {
+	if logFile, err = os.OpenFile(file, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644); err == nil {
 		logger = log.New(logFile, "", log.Ldate|log.Ltime)
 		logger.Printf("INFO: %s %s started", appName, appVersion)
 	} else {

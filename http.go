@@ -80,7 +80,7 @@ func request(conf any, httpMethod string, path string, headers map[string]string
 	if values.FieldByName("Ssl").Bool() {
 		scheme = "https://"
 		if values.FieldByName("SkipCheck").Bool() {
-			transportCfg.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+			transportCfg.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} // #nosec G402 - intentionally configurable via skip_check option
 		}
 	} else {
 		scheme = "http://"

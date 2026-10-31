@@ -23,7 +23,7 @@ func setConfPath() {
 		confPath = confFile
 
 		// make sure the directory for the config file exists, otherwise the config file cannot be saved
-		if err := os.MkdirAll(confDir, os.ModePerm); err != nil {
+		if err := os.MkdirAll(confDir, 0755); err != nil {
 			Log.Error("Error creating config dir %s: %s", confDir, err.Error())
 			exit(1)
 		}
