@@ -208,6 +208,9 @@ func loadConfig() {
 		})
 		// add the searchengines to the config
 		conf.Searchengines = engines
+	} else {
+		Log.Error("No SEARCHENGINES section in configuration file")
+		exit(1)
 	}
 
 	// check debug parameter
@@ -218,6 +221,9 @@ func loadConfig() {
 	// check target parameter
 	for target := range strings.SplitSeq(conf.General.Target, ",") {
 		target = strings.TrimSpace(target)
+		if target == "" {
+			continue
+		}
 		if _, ok := targets[target]; ok {
 			conf.General.Targets = append(conf.General.Targets, target)
 		} else {
