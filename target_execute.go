@@ -69,9 +69,6 @@ func execute_push(nzb string, category string) error {
 	// sanitize filename
 	sanitize, _ := svach.WithOpts("", 255)
 	nzbFileName := sanitize.Name(args.Title)
-	if nzbFileName == "" {
-		nzbFileName = "nzb"
-	}
 
 	// make filenames
 	zipFileName := nzbFileName
