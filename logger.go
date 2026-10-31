@@ -19,9 +19,35 @@ type Logger struct {
 	Debug func(string, ...interface{})
 }
 
+// fileWriter serializes writes to the log file so that logClose can
+// safely close it while another goroutine (e.g. the signal handler)
+// may still be writing
+type fileWriter struct {
+	mu     sync.Mutex
+	f      *os.File
+	closed bool
+}
+
+func (w *fileWriter) Write(b []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.closed {
+		return 0, os.ErrClosed
+	}
+	return w.f.Write(b)
+}
+
+func (w *fileWriter) Close() error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.closed = true
+	return w.f.Close()
+}
+
 // global error logger variables
 var (
 	logFile     *os.File
+	logWriter   *fileWriter
 	logger      *log.Logger
 	logInitOnce sync.Once
 	Log         = Logger{
@@ -111,7 +137,8 @@ func logEntry(logType string, logText string, vars ...interface{}) {
 func initLogger(file string) {
 	var err error
 	if logFile, err = os.OpenFile(file, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644); err == nil {
-		logger = log.New(logFile, "", log.Ldate|log.Ltime)
+		logWriter = &fileWriter{f: logFile}
+		logger = log.New(logWriter, "", log.Ldate|log.Ltime)
 		logger.Printf("INFO: %s %s started", appName, appVersion)
 	} else {
 		color.Set(color.FgRed)
@@ -123,7 +150,7 @@ func initLogger(file string) {
 
 func logClose() {
 	// clean up
-	if logFile != nil {
-		logFile.Close()
+	if logWriter != nil {
+		logWriter.Close()
 	}
 }
