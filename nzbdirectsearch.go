@@ -405,15 +405,19 @@ func measurePeakRates(ctx context.Context, ticker *time.Ticker, getLinesRead fun
 	}
 }
 
-func acquireLock() (*fslock.Lock, error) {
+// directSearchLockPath returns the lock file path for the single-instance
+// lock. The file name includes the uid so the lock does not collide with one
+// created by another user in the shared temp dir.
+func directSearchLockPath() string {
 	lockFileName := "directSearch.lock"
-	// include the uid so the shared lock file does not collide with one
-	// created by another user in the shared temp dir
 	if u, err := user.Current(); err == nil && u.Uid != "" {
 		lockFileName = fmt.Sprintf("directSearch-%s.lock", u.Uid)
 	}
-	lockFilePath := filepath.Join(tempPath, lockFileName)
-	lock := fslock.New(lockFilePath)
+	return filepath.Join(tempPath, lockFileName)
+}
+
+func acquireLock() (*fslock.Lock, error) {
+	lock := fslock.New(directSearchLockPath())
 	err := lock.TryLock()
 	if err == nil {
 		return lock, nil

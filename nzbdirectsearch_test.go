@@ -2,7 +2,6 @@ package main
 
 import (
 	"errors"
-	"path/filepath"
 	"testing"
 
 	"github.com/Tensai75/fslock"
@@ -18,7 +17,7 @@ func TestAcquireLock(t *testing.T) {
 	}
 
 	// while held, a second lock on the same file must report ErrLocked
-	second := fslock.New(filepath.Join(tempPath, "directSearch.lock"))
+	second := fslock.New(directSearchLockPath())
 	if err := second.TryLock(); !errors.Is(err, fslock.ErrLocked) {
 		t.Errorf("second TryLock err = %v, want ErrLocked", err)
 	}
