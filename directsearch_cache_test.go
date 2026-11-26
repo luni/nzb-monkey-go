@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"context"
 	"fmt"
+	"io"
 	"math"
 	"net"
 	"os"
@@ -318,6 +319,10 @@ type fakeNNTPServer struct {
 	overRanges  atomic.Int64
 	overLog     chan string
 	overHandler func(first, last int) []string
+	// stallPrefix, when non-empty, makes the server go silent once it
+	// receives a command starting with the prefix - it keeps the connection
+	// open and drains client input but never answers again.
+	stallPrefix atomic.Value
 }
 
 func newFakeNNTPServer(t *testing.T, overHandler func(first, last int) []string) *fakeNNTPServer {
@@ -331,6 +336,7 @@ func newFakeNNTPServer(t *testing.T, overHandler func(first, last int) []string)
 		overLog:     make(chan string, 100),
 		overHandler: overHandler,
 	}
+	s.stallPrefix.Store("")
 	go s.serve()
 	t.Cleanup(func() {
 		s.listener.Close()
@@ -362,6 +368,12 @@ func (s *fakeNNTPServer) handleConn(conn net.Conn) {
 	for scanner.Scan() {
 		cmd := strings.TrimSpace(scanner.Text())
 		upper := strings.ToUpper(cmd)
+		if prefix, _ := s.stallPrefix.Load().(string); prefix != "" && strings.HasPrefix(upper, prefix) {
+			// go silent: read until the client disconnects so the stalled
+			// connection stays open without ever answering
+			_, _ = io.Copy(io.Discard, conn)
+			return
+		}
 		switch {
 		case strings.HasPrefix(upper, "AUTHINFO USER"):
 			fmt.Fprintf(conn, "381 password required\r\n")
@@ -604,5 +616,75 @@ func TestCachedScanNoDuplicateSegmentsOnOverlap(t *testing.T) {
 	}
 	if got := server.overRanges.Load(); got != 0 {
 		t.Fatalf("expected no OVER requests, got %d", got)
+	}
+}
+
+// TestCachedScanStalledOverviewFailsInsteadOfHanging reproduces the stall
+// seen in the wild: the server accepts the connection and answers GROUP,
+// but never responds to the OVER command. Without a command timeout the
+// fetch worker blocks forever in a bare ReadString and the scan freezes
+// with no error. With the fix, run() must return an error in bounded time.
+func TestCachedScanStalledOverviewFailsInsteadOfHanging(t *testing.T) {
+	server := newFakeNNTPServer(t, nil)
+	server.stallPrefix.Store("OVER ")
+	pool := testPool(t, server.port())
+	cacheDir := filepath.Join(t.TempDir(), "alt.binaries.test")
+
+	// timeoutSeconds=1 -> command timeout of 3s, retries=0 -> a single attempt
+	scan := newCachedScan(context.Background(), pool, "alt.binaries.test", cacheDir, "needle", 100, 4, 0, 1, math.MaxInt64, nil)
+	done := make(chan error, 1)
+	go func() {
+		_, err := scan.run(100, 200)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("expected an error for a stalled server, got nil")
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("scan hung on a server that stopped answering - regression")
+	}
+}
+
+// TestCachedScanPoolAcquireTimeout covers the other half of the stall: the
+// server accepts TCP connections but never sends the greeting, so pool.Get
+// waits forever for a connection that is never established. The bounded
+// acquire timeout must surface an error instead of freezing the scan.
+func TestCachedScanPoolAcquireTimeout(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { listener.Close() })
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer conn.Close()
+				_, _ = io.Copy(io.Discard, conn) // accept and go silent
+			}()
+		}
+	}()
+	pool := testPool(t, uint32(listener.Addr().(*net.TCPAddr).Port))
+	cacheDir := filepath.Join(t.TempDir(), "alt.binaries.test")
+
+	scan := newCachedScan(context.Background(), pool, "alt.binaries.test", cacheDir, "needle", 100, 4, 0, 5, math.MaxInt64, nil)
+	scan.acquireTimeout = 500 * time.Millisecond
+	done := make(chan error, 1)
+	go func() {
+		_, err := scan.run(100, 200)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("expected an error when connections can never be established, got nil")
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("scan hung waiting for a pooled connection - regression")
 	}
 }

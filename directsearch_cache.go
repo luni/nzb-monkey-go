@@ -299,20 +299,32 @@ func compactCacheDir(dir string, maxMergedSize int64) {
 	}
 }
 
+// defaultAcquireTimeout bounds how long a fetch worker waits for a pooled
+// connection. Legitimate waits are on the order of a chunk transfer; when
+// the server stops answering, connections may never come back (or new ones
+// never get established), so the wait is capped to keep the scan from
+// hanging forever.
+const defaultAcquireTimeout = 2 * time.Minute
+
+// stallTimeout bounds how long the scan may go without any progress before
+// it is canceled as a safety net against uninterruptible network stalls.
+const stallTimeout = 5 * time.Minute
+
 // cachedScan holds the state of one cached message scan.
 type cachedScan struct {
-	ctx           context.Context
-	ctxCancel     context.CancelFunc
-	pool          nntpPool.ConnectionPool
-	group         string
-	cacheDir      string
-	header        string
-	headerLower   string
-	step          uint
-	connections   uint
-	retries       uint
-	timeout       time.Duration
-	maxMergedSize int64
+	ctx            context.Context
+	ctxCancel      context.CancelFunc
+	pool           nntpPool.ConnectionPool
+	group          string
+	cacheDir       string
+	header         string
+	headerLower    string
+	step           uint
+	connections    uint
+	retries        uint
+	timeout        time.Duration
+	acquireTimeout time.Duration
+	maxMergedSize  int64
 
 	linesChan       chan string
 	results         map[string]map[string]nzbparser.NzbFile
@@ -332,21 +344,22 @@ func newCachedScan(ctx context.Context, pool nntpPool.ConnectionPool, group stri
 		iterationFunc = func() {}
 	}
 	return &cachedScan{
-		ctx:           scanCtx,
-		ctxCancel:     cancel,
-		pool:          pool,
-		group:         group,
-		cacheDir:      cacheDir,
-		header:        header,
-		headerLower:   strings.ToLower(header),
-		step:          step,
-		connections:   connections,
-		retries:       retries,
-		timeout:       time.Duration(timeoutSeconds) * time.Second,
-		maxMergedSize: maxMergedSize,
-		linesChan:     make(chan string, 10000),
-		results:       make(map[string]map[string]nzbparser.NzbFile),
-		iteration:     iterationFunc,
+		ctx:            scanCtx,
+		ctxCancel:      cancel,
+		pool:           pool,
+		group:          group,
+		cacheDir:       cacheDir,
+		header:         header,
+		headerLower:    strings.ToLower(header),
+		step:           step,
+		connections:    connections,
+		retries:        retries,
+		timeout:        time.Duration(timeoutSeconds) * time.Second,
+		acquireTimeout: defaultAcquireTimeout,
+		maxMergedSize:  maxMergedSize,
+		linesChan:      make(chan string, 10000),
+		results:        make(map[string]map[string]nzbparser.NzbFile),
+		iteration:      iterationFunc,
 	}
 }
 
@@ -486,38 +499,130 @@ func (ms *cachedScan) fetchChunk(first uint, last uint) {
 	ms.reportError(fmt.Errorf("failed to retrieve message overview for range %d-%d after %d attempts: %v", first, last, ms.retries+1, lastErr))
 }
 
+// getConn retrieves a pooled connection with a bounded wait. The pool
+// context intentionally has no cancel attached: pool.Get closes the whole
+// pool when its context is done. If the caller gives up waiting but the
+// abandoned Get still delivers a connection, it is returned to the pool
+// instead of being leaked.
+func (ms *cachedScan) getConn() (*nntpPool.NNTPConn, error) {
+	type getResult struct {
+		conn *nntpPool.NNTPConn
+		err  error
+	}
+	// unbuffered on purpose: the send below only proceeds while the caller
+	// is still waiting - after a timeout the default branch returns the
+	// connection to the pool instead of leaking it into an unread channel
+	resultChan := make(chan getResult)
+	go func() {
+		conn, err := ms.pool.Get(context.WithoutCancel(ms.ctx))
+		select {
+		case resultChan <- getResult{conn: conn, err: err}:
+		default:
+			if conn != nil && err == nil {
+				ms.pool.Put(conn)
+			}
+		}
+	}()
+	timer := time.NewTimer(ms.acquireTimeout)
+	defer timer.Stop()
+	select {
+	case result := <-resultChan:
+		return result.conn, result.err
+	case <-ms.ctx.Done():
+		return nil, ms.ctx.Err()
+	case <-timer.C:
+		return nil, fmt.Errorf("timeout waiting for a pooled connection")
+	}
+}
+
+// callWithTimeout runs a blocking NNTP command in a goroutine and waits for
+// its result. On timeout or cancellation the connection is released
+// asynchronously (see releaseStalledConn). conn.Group and conn.OverviewReader
+// do bare ReadString calls without any deadline, so a server that stops
+// answering would otherwise stall the scan forever. The connection is
+// unusable after a timeout either way.
+func (ms *cachedScan) callWithTimeout(conn *nntpPool.NNTPConn, timeout time.Duration, fn func() error) error {
+	done := make(chan error, 1)
+	go func() { done <- fn() }()
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case err := <-done:
+		if err != nil {
+			// the command already finished - the conn carries no in-flight
+			// read, so closing it cannot race inside the nntp lib
+			conn.Close()
+			ms.pool.Put(conn)
+		}
+		return err
+	case <-ms.ctx.Done():
+		go ms.releaseStalledConn(done, conn)
+		return ms.ctx.Err()
+	case <-timer.C:
+		go ms.releaseStalledConn(done, conn)
+		return fmt.Errorf("nntp command timeout after %v", timeout)
+	}
+}
+
+// releaseStalledConn waits for an abandoned command goroutine to finish,
+// then closes the connection and returns its slot to the pool. Closing must
+// not happen while a command is still parked in a socket read: Quit() inside
+// the nntp lib would touch the same bufio.Reader concurrently. If the socket
+// never dies the goroutine simply leaks until the server drops it - the
+// pool slot is lost meanwhile, but the scan keeps running.
+func (ms *cachedScan) releaseStalledConn(done <-chan error, conn *nntpPool.NNTPConn) {
+	<-done
+	conn.Close()
+	ms.pool.Put(conn)
+}
+
+type readResult struct {
+	line string
+	err  error
+}
+
+// releaseChunkConn is the read-loop variant of releaseStalledConn: it waits
+// for the overview reader goroutine to exit (it closes resultChan on
+// return), then closes the connection and returns its slot to the pool.
+func (ms *cachedScan) releaseChunkConn(conn *nntpPool.NNTPConn, resultChan <-chan readResult) {
+	for range resultChan {
+	}
+	conn.Close()
+	ms.pool.Put(conn)
+}
+
 func (ms *cachedScan) fetchChunkOnce(first uint, last uint) error {
-	// acquire the connection with the non-cancelable context: a scan-level
-	// cancel must not close the shared pool (pool.Get closes the pool when
-	// the passed context is done)
-	conn, err := ms.pool.Get(context.WithoutCancel(ms.ctx))
+	conn, err := ms.getConn()
 	if err != nil {
 		return err
 	}
 	// select the group on every acquired connection - pooled connections
 	// keep no group state between users
-	if _, _, _, err := conn.Group(ms.group); err != nil {
-		conn.Close()
-		ms.pool.Put(conn)
+	if err := ms.callWithTimeout(conn, 3*ms.timeout, func() error {
+		_, _, _, err := conn.Group(ms.group)
+		return err
+	}); err != nil {
 		return err
 	}
-	reader, err := conn.OverviewReader(int(first), int(last))
-	if err != nil {
-		ms.pool.Put(conn)
+	var reader *bufio.Reader
+	if err := ms.callWithTimeout(conn, 3*ms.timeout, func() error {
+		var err error
+		reader, err = conn.OverviewReader(int(first), int(last))
+		return err
+	}); err != nil {
 		return err
 	}
 	largeReader := bufio.NewReaderSize(reader, 128*1024)
 
 	writer, err := newOverviewCacheWriter(ms.cacheDir, first, last)
 	if err != nil {
+		// the overview transfer may already be in flight - the conn is
+		// dirty and must not go back into the pool
+		conn.Close()
 		ms.pool.Put(conn)
 		return err
 	}
 
-	type readResult struct {
-		line string
-		err  error
-	}
 	resultChan := make(chan readResult, 1)
 	done := make(chan struct{})
 	go func(r *bufio.Reader, out chan<- readResult, stop <-chan struct{}) {
@@ -555,8 +660,7 @@ func (ms *cachedScan) fetchChunkOnce(first uint, last uint) error {
 		select {
 		case <-ms.ctx.Done():
 			writer.abort()
-			conn.Close()
-			ms.pool.Put(conn)
+			go ms.releaseChunkConn(conn, resultChan)
 			return ms.ctx.Err()
 		case result, ok := <-resultChan:
 			stopTimer()
@@ -571,6 +675,7 @@ func (ms *cachedScan) fetchChunkOnce(first uint, last uint) error {
 			}
 			if result.line == "." || result.line == "" {
 				if err := writer.finish(); err != nil {
+					conn.Close()
 					ms.pool.Put(conn)
 					return err
 				}
@@ -579,15 +684,13 @@ func (ms *cachedScan) fetchChunkOnce(first uint, last uint) error {
 			}
 			if err := writer.WriteLine(result.line); err != nil {
 				writer.abort()
-				conn.Close()
-				ms.pool.Put(conn)
+				go ms.releaseChunkConn(conn, resultChan)
 				return err
 			}
 			ms.dispatchLine(result.line)
 		case <-timer.C:
 			writer.abort()
-			conn.Close()
-			ms.pool.Put(conn)
+			go ms.releaseChunkConn(conn, resultChan)
 			return fmt.Errorf("overview reader timeout for range %d - %d", first, last)
 		}
 	}
@@ -604,6 +707,35 @@ func (ms *cachedScan) run(firstMessage uint, lastMessage uint) ([]*nzbparser.Nzb
 			ms.lineScanner()
 		})
 	}
+
+	// stall watchdog - cancel the scan if the processed-message counter does
+	// not advance for stallTimeout. Guards against stalls that cannot be
+	// interrupted directly, e.g. a worker stuck inside the connection pool.
+	watchdogStop := make(chan struct{})
+	var watchdogOnce sync.Once
+	stopWatchdog := func() { watchdogOnce.Do(func() { close(watchdogStop) }) }
+	defer stopWatchdog()
+	go func() {
+		var last uint64
+		timer := time.NewTimer(stallTimeout)
+		defer timer.Stop()
+		for {
+			select {
+			case <-watchdogStop:
+				return
+			case <-ms.ctx.Done():
+				return
+			case <-timer.C:
+				current := ms.messagesRead.Load()
+				if current == last {
+					ms.reportError(fmt.Errorf("scan made no progress for %v - aborting as stalled", stallTimeout))
+					return
+				}
+				last = current
+				timer.Reset(stallTimeout)
+			}
+		}
+	}()
 
 	// split the range into cached parts and gaps to fetch
 	intervals := listCacheIntervals(ms.cacheDir)
@@ -648,6 +780,9 @@ schedule:
 	fetchWG.Wait()
 	close(ms.linesChan)
 	lineWG.Wait()
+
+	// scan phase done - cache compaction may legitimately take a while
+	stopWatchdog()
 
 	// consolidate adjacent cache files into continuous ranges
 	compactCacheDir(ms.cacheDir, ms.maxMergedSize)
