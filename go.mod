@@ -18,8 +18,8 @@ require (
 	github.com/schollz/progressbar/v3 v3.19.1
 	github.com/skratchdot/open-golang v0.0.0-20200116055534-eef842397966
 	golang.org/x/exp v0.0.0-20261014143641-f0251eb4aa3e
-	golang.org/x/sys v0.49.0
-	gopkg.in/ini.v1 v1.67.3
+	golang.org/x/sys v0.50.0
+	gopkg.in/ini.v1 v1.68.0
 )
 
 require (
